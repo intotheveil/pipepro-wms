@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create *)",
+      "Bash(npm install *)",
+      "Bash(rm -rf src/App.css src/assets src/index.css src/App.jsx src/main.jsx)",
+      "Bash(mkdir -p src/components src/pages src/lib src/styles)",
+      "Bash(npx vite *)",
+      "Bash(npm run *)",
+      "Bash(clip)"
+    ]
+  }
+}

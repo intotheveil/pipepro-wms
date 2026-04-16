@@ -1,0 +1,96 @@
+# PipePro WMS — Complete Database Schema
+# All tables require: id uuid PK DEFAULT gen_random_uuid(), project_id uuid FK → projects.id, created_at timestamptz DEFAULT now()
+# Enable RLS on all tables.
+
+## projects
+id, code, name, client, contractor, logo_url, active_tier (starter|pro|enterprise)
+
+## project_members
+id, project_id, user_id, role (admin|qc|viewer|field), username, pin
+
+## subcontractors
+id, project_id, name, code, scope (fabrication|erection|ndt|painting|all)
+
+## iso_register
+id, project_id, fast_no, drawing_no, revision, sheet, fluid_code, piping_class, material, size_nps, ped_category, system, area, testpack_id FK→testpacks, status (NOT_STARTED|IN_PROGRESS|COMPLETE|ON_HOLD), hold_reason, notes
+
+## spools
+id, project_id, iso_id FK→iso_register, spool_no, shop_field (shop|field), subcon_id FK→subcontractors, material_checked bool, material_check_date date, fab_started bool, fab_start_date date, fabricated bool, fabricated_date date, qc_released bool, qc_release_date date, sent_to_paint bool, sent_to_paint_date date, painted bool, painted_date date, at_laydown bool, laydown_date date, erected bool, erected_date date, barcode text, location_lat numeric, location_lng numeric, location_updated_at timestamptz, notes
+
+## weld_log
+id, project_id, iso_id FK→iso_register, spool_id FK→spools nullable, weld_id text, joint_type (BW|SW|FW|socket), shop_field, size_nps, dia_inch numeric, thickness numeric, material_1, material_2, wps_id FK→wps_list, welder_id FK→welders nullable, fit_up_date date, fit_up_by FK→welders nullable, weld_date date, welded bool, visual_ok bool, visual_date date, pwht_required bool, pwht_done bool, pwht_date date, status (not_started|fit_up|welded|ndt_pending|accepted|rejected|repaired), reject_count int DEFAULT 0, notes
+
+## wps_list
+id, project_id, wps_no, process (GTAW|SMAW|FCAW|SAW), p_numbers, thickness_range, position
+
+## welders
+id, project_id, subcon_id FK→subcontractors, name, stamp, qualified_wps text[], qualification_exp date, active bool DEFAULT true
+
+## ndt_register
+id, project_id, weld_id FK→weld_log, method (RT|UT|PT|MT|VT), extent_pct numeric, batch_id FK→ndt_batches nullable, requested_date date, examined_date date, subcon_id FK→subcontractors nullable, technician text, report_no text, result (PENDING|ACCEPTED|REJECTED|REPAIRED), defect_code text, repair_weld_id FK→weld_log nullable, film_url text, client_witnessed bool DEFAULT false, client_result text
+
+## ndt_matrix
+id, project_id, piping_class, service_class, weld_type, method, extent_pct numeric, ped_category
+
+## ndt_batches
+id, project_id, batch_no, method, subcon_id FK→subcontractors, issued_date date, status (open|submitted|closed)
+
+## supports_list
+id, project_id, iso_id FK→iso_register, support_mark, eidos, shop_field, qty int, weight_kg numeric, subcon_id FK→subcontractors nullable, welder_id FK→welders nullable, fitup_date date, weld_date date, status (not_started|fitup|welded|inspected|painted|complete), paint_date date, installed_date date, is_field bool DEFAULT false, notes
+
+## testpacks
+id, project_id, testpack_no, system, sub_system, fluid, test_medium (Water|Air|Nitrogen|Service), test_pressure_bar numeric, design_pressure_bar numeric, line_check_done bool DEFAULT false, line_check_date date, line_checker_id FK→project_members nullable, blinding_done bool DEFAULT false, blinding_date date, test_date date, test_result (PENDING|PASS|FAIL), reinstatement_done bool DEFAULT false, reinstatement_date date, punch_list_clear bool DEFAULT false, status (draft|line_check|blinding|testing|reinstatement|complete), certificate_url text
+
+## flange_joints
+id, project_id, iso_id FK→iso_register, spool_id FK→spools nullable, testpack_id FK→testpacks nullable, joint_id text, size_nps, rating (150|300|600|900|1500|2500), flange_material, gasket_type (RF|RTJ|FF|SWG), gasket_material, bolt_spec, bolt_qty int, bolt_size, fluid, system, target_torque_dry_nm numeric, target_torque_lub_nm numeric, lubricant, assembler_id FK→project_members nullable, inspector_id FK→project_members nullable, assembly_date date, status (pending|assembled|torqued|inspected|reinstated), reinstated bool DEFAULT false, reinstatement_date date, shop_field, comments
+
+## flange_torque_steps
+id, project_id, flange_joint_id FK→flange_joints, step_pct int (30|50|75|100), actual_torque_nm numeric, torque_wrench_id text, torque_wrench_cert_exp date, recorded_by FK→project_members, recorded_at timestamptz
+
+## punch_items
+id, project_id, punch_no text, category (A|B), discipline (piping|structural|instruments|electrical|civil), raised_by_role (contractor_internal|client|third_party|notified_body), raised_by FK→project_members, raised_date date, description text, iso_id FK nullable, spool_id FK nullable, weld_id FK nullable, support_id FK nullable, flange_joint_id FK nullable, testpack_id FK nullable, assigned_to FK→project_members nullable, target_close_date date, action_taken text, actioned_date date, actioned_by FK→project_members nullable, closeout_evidence text[], submitted_for_close_date date, closed_by FK→project_members nullable, closed_date date, status (open|actioned|submitted_for_close|closed|rejected_close), rejection_reason text, handover_package_id FK nullable
+
+## rfi_records
+id, project_id, rfi_no text, title, inspection_type (fit_up|visual_weld|nde_witness|support_install|flange_assembly|pressure_test|walkdown|final_inspection), discipline, requested_date date, requested_time text, location text, raised_by FK→project_members, raised_date date, issued_date timestamptz, acknowledged_date timestamptz, inspected_date date, inspector_name text, result (PENDING|ACCEPTED|CONDITIONALLY_ACCEPTED|REJECTED), conditions text, status (draft|issued|acknowledged|inspected|closed|cancelled), pdf_url text, email_thread_id text, notes
+
+## rfi_tags
+id, project_id, rfi_id FK→rfi_records, tag_type (iso|spool|weld|support|flange_joint|testpack), tag_id uuid
+
+## document_categories
+id, project_id, name, parent_id FK→document_categories nullable, sort_order int DEFAULT 0
+
+## documents
+id, project_id, category_id FK→document_categories, title, doc_no, revision, file_url, file_type, file_size_kb int, iso_id FK nullable, weld_id FK nullable, support_id FK nullable, testpack_id FK nullable, uploaded_by uuid, uploaded_at timestamptz, tags text[], status (active|superseded|voided), notes
+
+## qc_form_templates
+id, project_id, code, title, applies_to (spool|weld|support|testpack|iso|flange_joint), fields jsonb, active bool DEFAULT true
+
+## qc_records
+id, project_id, template_id FK→qc_form_templates, iso_id FK nullable, spool_id FK nullable, weld_id FK nullable, support_id FK nullable, testpack_id FK nullable, flange_joint_id FK nullable, data jsonb, status (draft|submitted|approved|rejected), submitted_by uuid, submitted_at timestamptz, approved_by uuid nullable, approved_at timestamptz nullable, signature_url text, attachments text[]
+
+## milestones
+id, project_id, code, name, category (fabrication|erection|ndt|testpack|handover), planned_date date, forecast_date date, actual_date date, linked_metric text, target_value numeric, source (manual|primavera|msproject), import_id text
+
+## progress_snapshots
+id, project_id, snapshot_date date, module (welding|ndt|fabrication|erection|supports|testpacks), total int, complete int, dia_inch_total numeric, dia_inch_done numeric, weight_total_kg numeric, weight_done_kg numeric, notes
+
+## import_logs
+id, project_id, imported_at timestamptz, imported_by uuid, file_name, import_type (iso_register|weld_log|supports|ndt|schedule|material), rows_imported int, rows_skipped int, errors jsonb, status (success|partial|failed)
+
+## handover_packages
+id, project_id, package_no, title, scope_type (testpack|system|iso_group|full_project), testpack_id FK nullable, system text, compiled_by FK→project_members, compiled_at timestamptz, submitted_date date, client_accepted_date date, status (draft|compiled|submitted|accepted|rejected), rejection_reason text, open_b_items int DEFAULT 0, package_url text, notes
+
+## package_items
+id, project_id, package_id FK→handover_packages, item_type (iso|weld|ndt_record|qc_record|rfi|punch_item|document|flange_joint|pressure_test), item_id uuid, item_ref text, item_status_snapshot text, file_url text, section text, sort_order int DEFAULT 0
+
+## ARCHITECTURE NOTES
+- All routes nested under /p/:projectSlug/
+- ProjectLoader component reads slug, fetches project, sets React context
+- All queries filter by project_id from context — never passed as prop
+- Tier gating: frontend checks project.active_tier via useTier() hook
+- Files in Supabase Storage only, paths stored as text in DB
+- JSONB for QC form field values (flexible per-project ITP)
+- Handover package_items are immutable once status = submitted
+- Offline capability deferred — all writes use async/await with explicit error handling
+- CSS variables for all colors, inline styles only, no Tailwind
+- Date parsing: always split string, never new Date(str)
