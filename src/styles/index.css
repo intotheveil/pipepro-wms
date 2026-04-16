@@ -15,14 +15,16 @@
   /* Sidebar */
   --sidebar-width: 260px;
   --sidebar-collapsed-width: 56px;
-  --sidebar-bg: #111318;
-  --sidebar-text: #c8ccd4;
+  --sidebar-bg: #1B3A5C;
+  --sidebar-bg-darker: #152e4a;
+  --sidebar-text: #b8cce0;
   --sidebar-text-active: #ffffff;
-  --sidebar-hover: rgba(255, 255, 255, 0.06);
-  --sidebar-active: rgba(37, 99, 235, 0.18);
-  --sidebar-section-text: #6b7280;
-  --sidebar-icon: #6b7280;
+  --sidebar-hover: rgba(255, 255, 255, 0.08);
+  --sidebar-active: rgba(255, 255, 255, 0.15);
+  --sidebar-section-text: #7a9abb;
+  --sidebar-icon: #7a9abb;
   --sidebar-icon-active: #93c5fd;
+  --sidebar-divider: rgba(255, 255, 255, 0.1);
 
   /* Status */
   --color-success: #16a34a;

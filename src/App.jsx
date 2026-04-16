@@ -32,9 +32,28 @@ export default function App() {
           >
             <Route index element={<Navigate to="isos" replace />} />
             <Route path="isos" element={<ISORegister />} />
+
+            {/* Placeholder routes for sidebar links */}
+            <Route path="welds" element={<Placeholder title="Weld Log" />} />
+            <Route path="spools" element={<Placeholder title="Spools" />} />
+            <Route path="fabrication" element={<Placeholder title="Fab Dashboard" />} />
+            <Route path="ndt" element={<Placeholder title="NDT Register" />} />
+            <Route path="supports" element={<Placeholder title="Supports List" />} />
+            <Route path="supports/status" element={<Placeholder title="Supports Status" />} />
+            <Route path="supports/dashboard" element={<Placeholder title="Supports Dashboard" />} />
+            <Route path="reports" element={<Placeholder title="Reports" />} />
           </Route>
         </Routes>
       </BrowserRouter>
     </AuthProvider>
+  );
+}
+
+function Placeholder({ title }) {
+  return (
+    <div style={{ padding: 'var(--space-xl)' }}>
+      <h1 style={{ fontSize: 22, marginBottom: 'var(--space-sm)' }}>{title}</h1>
+      <p style={{ color: 'var(--color-text-muted)' }}>Coming soon</p>
+    </div>
   );
 }

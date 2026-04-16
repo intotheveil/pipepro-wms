@@ -2,7 +2,7 @@ import { useParams, Outlet, Navigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { getSupabase } from '../lib/supabase';
 import { ProjectContext } from '../lib/project.jsx';
-import Sidebar from '../components/Sidebar';
+import AppLayout from '../components/AppLayout';
 
 export default function ProjectLoader() {
   const { projectSlug } = useParams();
@@ -19,9 +19,6 @@ export default function ProjectLoader() {
 
       try {
         const supabase = getSupabase();
-
-        // RLS already filters to projects the user is a member of.
-        // Match slug against code (lowercased, spaces → dashes).
         const { data } = await supabase
           .from('projects')
           .select('*')
@@ -71,12 +68,9 @@ export default function ProjectLoader() {
 
   return (
     <ProjectContext.Provider value={project}>
-      <div style={{ display: 'flex', height: '100%' }}>
-        <Sidebar />
-        <main style={{ flex: 1, overflow: 'auto' }}>
-          <Outlet />
-        </main>
-      </div>
+      <AppLayout>
+        <Outlet />
+      </AppLayout>
     </ProjectContext.Provider>
   );
 }
