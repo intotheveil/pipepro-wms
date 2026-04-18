@@ -4,10 +4,13 @@ import AuthGuard from './components/AuthGuard';
 import LoginPage from './pages/LoginPage';
 import ProjectPicker from './pages/ProjectPicker';
 import ProjectLoader from './pages/ProjectLoader';
+import Home from './pages/Home';
 import ISORegister from './pages/ISORegister';
 import Import from './pages/Import';
 import Documents from './pages/Documents';
 import WeldLog from './pages/WeldLog';
+import Welders from './pages/Welders';
+import WPSRegister from './pages/WPSRegister';
 import Spools from './pages/Spools';
 import FabDashboard from './pages/FabDashboard';
 import NDTRegister from './pages/NDTRegister';
@@ -17,6 +20,8 @@ import SupportsDashboard from './pages/SupportsDashboard';
 import Materials from './pages/Materials';
 import ISODetail from './pages/ISODetail';
 import QCRecords from './pages/QCRecords';
+import Personnel from './pages/Personnel';
+import Equipment from './pages/Equipment';
 
 export default function App() {
   return (
@@ -42,10 +47,12 @@ export default function App() {
               </AuthGuard>
             }
           >
-            <Route index element={<Navigate to="isos" replace />} />
+            <Route index element={<Home />} />
             <Route path="iso/:fastNo" element={<ISODetail />} />
             <Route path="isos" element={<ISORegister />} />
             <Route path="welds" element={<WeldLog />} />
+            <Route path="welders" element={<Welders />} />
+            <Route path="wps" element={<WPSRegister />} />
             <Route path="spools" element={<Spools />} />
             <Route path="fabrication" element={<FabDashboard />} />
             <Route path="qc-records" element={<QCRecords />} />
@@ -55,6 +62,8 @@ export default function App() {
             <Route path="supports/status" element={<SupportsStatus />} />
             <Route path="supports/dashboard" element={<SupportsDashboard />} />
             <Route path="documents" element={<Documents />} />
+            <Route path="personnel" element={<Personnel />} />
+            <Route path="equipment" element={<Equipment />} />
             <Route path="import" element={<Import />} />
             <Route path="reports" element={<Placeholder title="Reports" />} />
           </Route>
