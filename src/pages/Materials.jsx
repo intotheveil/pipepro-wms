@@ -137,27 +137,37 @@ function BOMTab({ project }) {
   const [items, setItems] = useState([]);
   const [receivings, setReceivings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [fIso, setFIso] = useState('');
 
-  useEffect(() => {
+  function doFetch() {
     let c = false;
+    setLoading(true);
+    setError(null);
     (async () => {
-      setLoading(true);
-      const sb = getSupabase();
-      const pid = project.id;
-      const [itemsData, rcvData] = await Promise.all([
-        fetchAll(sb.from('material_items').select('*').eq('project_id', pid).order('pos')),
-        fetchAll(sb.from('material_receivings').select('material_item_id, qty_received').eq('project_id', pid)),
-      ]);
-      if (!c) {
-        setItems(itemsData);
-        setReceivings(rcvData);
-        setLoading(false);
+      try {
+        const sb = getSupabase();
+        const pid = project.id;
+        const [itemsData, rcvData] = await Promise.all([
+          fetchAll(sb.from('material_items').select('*').eq('project_id', pid).order('pos')),
+          fetchAll(sb.from('material_receivings').select('material_item_id, qty_received').eq('project_id', pid)),
+        ]);
+        if (!c) {
+          setItems(itemsData);
+          setReceivings(rcvData);
+        }
+      } catch (err) {
+        console.error('[Materials/BOMTab]', err);
+        if (!c) setError(err.message || String(err));
+      } finally {
+        if (!c) setLoading(false);
       }
     })();
     return () => { c = true; };
-  }, [project.id]);
+  }
+
+  useEffect(doFetch, [project.id]);
 
   // compute received sums
   const receivedMap = useMemo(() => {
@@ -228,7 +238,12 @@ function BOMTab({ project }) {
         <button onClick={exportXlsx} style={bSec}>Export</button>
       </div>
 
-      {loading ? (
+      {error ? (
+        <div style={{ padding: 'var(--space-md)', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+          <span style={{ fontSize: 13, color: '#991b1b', flex: 1 }}>Failed to load: {error}</span>
+          <button onClick={doFetch} style={{ ...bSec, fontSize: 12, padding: '4px 12px' }}>Retry</button>
+        </div>
+      ) : loading ? (
         <p style={{ color: 'var(--color-text-muted)' }}>Loading&hellip;</p>
       ) : items.length === 0 ? (
         <Empty msg="No material items found." />
@@ -296,28 +311,38 @@ function PackingTab({ project }) {
   const [lists, setLists] = useState([]);
   const [plItems, setPlItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [panel, setPanel] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  function doFetch() {
     let c = false;
+    setLoading(true);
+    setError(null);
     (async () => {
-      setLoading(true);
-      const sb = getSupabase();
-      const pid = project.id;
-      const [plData, pliData] = await Promise.all([
-        fetchAll(sb.from('packing_lists').select('*').eq('project_id', pid).order('received_date', { ascending: false })),
-        fetchAll(sb.from('packing_list_items').select('*').eq('project_id', pid)),
-      ]);
-      if (!c) {
-        setLists(plData);
-        setPlItems(pliData);
-        setLoading(false);
+      try {
+        const sb = getSupabase();
+        const pid = project.id;
+        const [plData, pliData] = await Promise.all([
+          fetchAll(sb.from('packing_lists').select('*').eq('project_id', pid).order('received_date', { ascending: false })),
+          fetchAll(sb.from('packing_list_items').select('*').eq('project_id', pid)),
+        ]);
+        if (!c) {
+          setLists(plData);
+          setPlItems(pliData);
+        }
+      } catch (err) {
+        console.error('[Materials/PackingTab]', err);
+        if (!c) setError(err.message || String(err));
+      } finally {
+        if (!c) setLoading(false);
       }
     })();
     return () => { c = true; };
-  }, [project.id]);
+  }
+
+  useEffect(doFetch, [project.id]);
 
   // group items by packing_list_id
   const itemsByPl = useMemo(() => {
@@ -392,7 +417,12 @@ function PackingTab({ project }) {
           <button onClick={openAdd} style={bPri}>New Packing List</button>
         </div>
 
-        {loading ? (
+        {error ? (
+          <div style={{ padding: 'var(--space-md)', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+            <span style={{ fontSize: 13, color: '#991b1b', flex: 1 }}>Failed to load: {error}</span>
+            <button onClick={doFetch} style={{ ...bSec, fontSize: 12, padding: '4px 12px' }}>Retry</button>
+          </div>
+        ) : loading ? (
           <p style={{ color: 'var(--color-text-muted)' }}>Loading&hellip;</p>
         ) : lists.length === 0 ? (
           <Empty msg="No packing lists found." />
@@ -506,30 +536,40 @@ function ReceivingsTab({ project }) {
   const [rows, setRows] = useState([]);
   const [matItems, setMatItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [fStatus, setFStatus] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [uploadingId, setUploadingId] = useState(null);
   const saveTimerRef = useRef(null);
 
-  useEffect(() => {
+  function doFetch() {
     let c = false;
+    setLoading(true);
+    setError(null);
     (async () => {
-      setLoading(true);
-      const sb = getSupabase();
-      const pid = project.id;
-      const [rcvData, matData] = await Promise.all([
-        fetchAll(sb.from('material_receivings').select('*').eq('project_id', pid).order('received_date', { ascending: false })),
-        fetchAll(sb.from('material_items').select('id, description').eq('project_id', pid)),
-      ]);
-      if (!c) {
-        setRows(rcvData);
-        setMatItems(matData);
-        setLoading(false);
+      try {
+        const sb = getSupabase();
+        const pid = project.id;
+        const [rcvData, matData] = await Promise.all([
+          fetchAll(sb.from('material_receivings').select('*').eq('project_id', pid).order('received_date', { ascending: false })),
+          fetchAll(sb.from('material_items').select('id, description').eq('project_id', pid)),
+        ]);
+        if (!c) {
+          setRows(rcvData);
+          setMatItems(matData);
+        }
+      } catch (err) {
+        console.error('[Materials/ReceivingsTab]', err);
+        if (!c) setError(err.message || String(err));
+      } finally {
+        if (!c) setLoading(false);
       }
     })();
     return () => { c = true; };
-  }, [project.id]);
+  }
+
+  useEffect(doFetch, [project.id]);
 
   const matMap = useMemo(() => Object.fromEntries((matItems).map((r) => [r.id, r.description])), [matItems]);
 
@@ -600,7 +640,12 @@ function ReceivingsTab({ project }) {
         </select>
       </div>
 
-      {loading ? (
+      {error ? (
+        <div style={{ padding: 'var(--space-md)', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+          <span style={{ fontSize: 13, color: '#991b1b', flex: 1 }}>Failed to load: {error}</span>
+          <button onClick={doFetch} style={{ ...bSec, fontSize: 12, padding: '4px 12px' }}>Retry</button>
+        </div>
+      ) : loading ? (
         <p style={{ color: 'var(--color-text-muted)' }}>Loading&hellip;</p>
       ) : rows.length === 0 ? (
         <Empty msg="No receivings found." />
