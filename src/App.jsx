@@ -5,6 +5,18 @@ import LoginPage from './pages/LoginPage';
 import ProjectPicker from './pages/ProjectPicker';
 import ProjectLoader from './pages/ProjectLoader';
 import ISORegister from './pages/ISORegister';
+import Import from './pages/Import';
+import Documents from './pages/Documents';
+import WeldLog from './pages/WeldLog';
+import Spools from './pages/Spools';
+import FabDashboard from './pages/FabDashboard';
+import NDTRegister from './pages/NDTRegister';
+import Supports from './pages/Supports';
+import SupportsStatus from './pages/SupportsStatus';
+import SupportsDashboard from './pages/SupportsDashboard';
+import Materials from './pages/Materials';
+import ISODetail from './pages/ISODetail';
+import QCRecords from './pages/QCRecords';
 
 export default function App() {
   return (
@@ -31,16 +43,19 @@ export default function App() {
             }
           >
             <Route index element={<Navigate to="isos" replace />} />
+            <Route path="iso/:fastNo" element={<ISODetail />} />
             <Route path="isos" element={<ISORegister />} />
-
-            {/* Placeholder routes for sidebar links */}
-            <Route path="welds" element={<Placeholder title="Weld Log" />} />
-            <Route path="spools" element={<Placeholder title="Spools" />} />
-            <Route path="fabrication" element={<Placeholder title="Fab Dashboard" />} />
-            <Route path="ndt" element={<Placeholder title="NDT Register" />} />
-            <Route path="supports" element={<Placeholder title="Supports List" />} />
-            <Route path="supports/status" element={<Placeholder title="Supports Status" />} />
-            <Route path="supports/dashboard" element={<Placeholder title="Supports Dashboard" />} />
+            <Route path="welds" element={<WeldLog />} />
+            <Route path="spools" element={<Spools />} />
+            <Route path="fabrication" element={<FabDashboard />} />
+            <Route path="qc-records" element={<QCRecords />} />
+            <Route path="materials" element={<Materials />} />
+            <Route path="ndt" element={<NDTRegister />} />
+            <Route path="supports" element={<Supports />} />
+            <Route path="supports/status" element={<SupportsStatus />} />
+            <Route path="supports/dashboard" element={<SupportsDashboard />} />
+            <Route path="documents" element={<Documents />} />
+            <Route path="import" element={<Import />} />
             <Route path="reports" element={<Placeholder title="Reports" />} />
           </Route>
         </Routes>

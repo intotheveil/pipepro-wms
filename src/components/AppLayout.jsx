@@ -16,6 +16,8 @@ const NAV_SECTIONS = [
       { label: 'Weld Log', to: 'welds' },
       { label: 'Spools', to: 'spools' },
       { label: 'Fab Dashboard', to: 'fabrication' },
+      { label: 'QC Records', to: 'qc-records' },
+      { label: 'Materials', to: 'materials' },
     ],
   },
   {
@@ -42,6 +44,8 @@ const NAV_SECTIONS = [
     label: 'More',
     icon: '\u2699\uFE0F',
     items: [
+      { label: 'Documents', to: 'documents' },
+      { label: 'Import Data', to: 'import' },
       { label: 'Reports', to: 'reports' },
       { label: 'Sign out', action: 'signout' },
     ],
