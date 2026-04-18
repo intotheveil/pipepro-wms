@@ -1,7 +1,13 @@
 /**
  * Import definitions for each supported sheet type.
  * Each importer defines: sheet detection, header row, column mapping, transforms.
+ *
+ * Also exports standalone material-module importers:
+ *   importMaterialsBOM, importMaterialsCatalogue, importMaterialsDelivery
  */
+import { read, utils } from 'xlsx';
+import { getSupabase } from './supabase';
+import { fetchAll } from './fetchAll';
 
 // -- Parsing helpers ----------------------------------------------------------
 
@@ -649,6 +655,358 @@ const materialListImporter = {
 
   previewColumns: ['fn_pos', 'iso_drawing', 'description', 'size_nd', 'qty_required', 'unit'],
 };
+
+// =============================================================================
+// STANDALONE MATERIAL-MODULE IMPORTERS
+// =============================================================================
+
+const MAT_BATCH = 200;
+
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = read(ev.target.result, { type: 'array', cellDates: true });
+        resolve(wb);
+      } catch (err) { reject(err); }
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function parseQty(raw) {
+  if (raw == null || raw === '') return { qty_raw: '', qty_num: null, qty_unit: null };
+  const s = String(raw).trim();
+  const upper = s.toUpperCase();
+  if (upper.endsWith('M')) {
+    const n = parseFloat(s);
+    return { qty_raw: s, qty_num: isNaN(n) ? null : n, qty_unit: 'm' };
+  }
+  if (upper.endsWith('KG')) {
+    const n = parseFloat(s);
+    return { qty_raw: s, qty_num: isNaN(n) ? null : n, qty_unit: 'kg' };
+  }
+  const n = Number(s);
+  if (!isNaN(n)) return { qty_raw: s, qty_num: n, qty_unit: 'pcs' };
+  return { qty_raw: s, qty_num: null, qty_unit: null };
+}
+
+// -- A) Materials BOM ---------------------------------------------------------
+
+export async function importMaterialsBOM(file, projectId) {
+  const wb = await readFile(file);
+  const sheetName = wb.SheetNames.find(n => n.toUpperCase().includes('MATERIAL')) || wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const rawRows = utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+  // Header on row 2 (index 1)
+  if (rawRows.length < 3) return { total_rows: 0, inserted: 0, updated: 0, unmatched_fn_count: 0, unmatched_fns: [] };
+  const headers = rawRows[1];
+  const dataRows = rawRows.slice(2);
+
+  const col = (row, ...names) => cellVal(row, findColumn(headers, ...names));
+
+  const sb = getSupabase();
+
+  // Build iso lookup by fast_no
+  const isoData = await fetchAll(sb.from('iso_register').select('id, fast_no').eq('project_id', projectId));
+  const isoMap = {};
+  for (const r of isoData) isoMap[String(r.fast_no)] = r.id;
+
+  const mapped = [];
+  const unmatchedFns = new Set();
+
+  for (const row of dataRows) {
+    const pos = col(row, 'POS', 'POSITION');
+    const desc = str(col(row, 'DESCRIPTION', 'DESC'));
+    if (pos == null && !desc) continue; // skip blank rows
+
+    const posNum = parseInt(String(pos), 10);
+    if (isNaN(posNum)) continue;
+
+    const fnRaw = str(col(row, 'FN', 'FAST NO', 'FAST No', 'FAST No.', 'FAST_NO', 'FAST NUMBER', 'FAST'));
+    const isoId = isoMap[fnRaw] || null;
+    if (!isoId && fnRaw) unmatchedFns.add(fnRaw);
+
+    const rev = str(col(row, 'REVISION', 'REV')) || 'R0';
+    const { qty_raw, qty_num, qty_unit } = parseQty(col(row, 'QTY', 'QUANTITY'));
+
+    mapped.push({
+      project_id: projectId,
+      iso_id: isoId,
+      fn_text: isoId ? null : fnRaw || null,
+      pos: posNum,
+      revision: rev,
+      is_current: true,
+      description: desc || null,
+      nd: str(col(row, 'ND', 'SIZE', 'SIZE ND')) || null,
+      qty_raw: qty_raw || null,
+      qty_num,
+      qty_unit,
+      system: str(col(row, 'SYSTEM')) || null,
+      system_code: str(col(row, 'SYSTEM CODE', 'SYSTEM_CODE')) || null,
+      sheet: str(col(row, 'SHEET', 'SHEET NO')) || null,
+      imported_at: new Date().toISOString(),
+      imported_from: file.name,
+    });
+  }
+
+  // Revision supersede: mark old revisions as not current
+  const revGroups = {};
+  for (const r of mapped) {
+    if (!r.iso_id) continue;
+    const key = `${r.iso_id}::${r.revision}`;
+    revGroups[key] = { iso_id: r.iso_id, revision: r.revision };
+  }
+  for (const { iso_id, revision } of Object.values(revGroups)) {
+    await sb.from('materials_bom')
+      .update({ is_current: false })
+      .eq('project_id', projectId)
+      .eq('iso_id', iso_id)
+      .eq('is_current', true)
+      .neq('revision', revision);
+  }
+
+  // Upsert in batches
+  let inserted = 0;
+  let updated = 0;
+  for (let i = 0; i < mapped.length; i += MAT_BATCH) {
+    const batch = mapped.slice(i, i + MAT_BATCH);
+    const { data, error } = await sb.from('materials_bom')
+      .upsert(batch, { onConflict: 'project_id,iso_id,pos,revision' })
+      .select('id');
+    if (error) console.error('[importMaterialsBOM] batch error:', error.message);
+    else if (data) inserted += data.length;
+  }
+
+  if (unmatchedFns.size > 0) {
+    console.warn(`[importMaterialsBOM] ${unmatchedFns.size} FN values did not match any ISO`);
+  }
+
+  return {
+    total_rows: mapped.length,
+    inserted,
+    updated: 0,
+    unmatched_fn_count: unmatchedFns.size,
+    unmatched_fns: [...unmatchedFns].slice(0, 20),
+  };
+}
+
+// -- B) Materials Catalogue (MTO) ---------------------------------------------
+
+export async function importMaterialsCatalogue(file, projectId) {
+  const wb = await readFile(file);
+
+  // Find the right sheet: 'ALL MTOS' or first sheet not named 'Pivot'
+  let sheetName = wb.SheetNames.find(n => n.toUpperCase() === 'ALL MTOS');
+  if (!sheetName) sheetName = wb.SheetNames.find(n => n.toUpperCase() !== 'PIVOT') || wb.SheetNames[0];
+
+  const ws = wb.Sheets[sheetName];
+  const rawRows = utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+  // Header on row 2 (index 1)
+  if (rawRows.length < 3) return { total_rows: 0, inserted: 0, updated: 0, skipped_no_partno: 0 };
+  const headers = rawRows[1];
+  const dataRows = rawRows.slice(2);
+
+  const col = (row, ...names) => cellVal(row, findColumn(headers, ...names));
+
+  // Canonical column indices (pre-compute for raw jsonb exclusion)
+  const CANONICAL_NAMES = [
+    'PART NO#', 'PART NO', 'PRODUCT', 'DESCRIPTION', 'SPEC', 'ND', 'CAT',
+    'QTY (FOR PROCUREMENT)', 'QTY', 'RECEIVED', 'UOM',
+    'WEIGHT (KG)', 'UNIT PRICE (\u20AC)', 'UNIT PRICE (EUR)',
+    'ORIGIN', 'MILL', 'DELIVERY TIME', 'LONG CODE',
+  ];
+  const canonicalIndices = new Set();
+  for (const name of CANONICAL_NAMES) {
+    const idx = findColumn(headers, name);
+    if (idx >= 0) canonicalIndices.add(idx);
+  }
+
+  const mapped = [];
+  let skipped = 0;
+  const SYSTEM_TOKEN_RE = /^APP-\d+-([A-Z0-9_]+)-/;
+
+  for (const row of dataRows) {
+    const partNo = str(col(row, 'PART NO#', 'PART NO'));
+    if (!partNo || partNo.toUpperCase() === 'NAN') { skipped++; continue; }
+
+    const longCode = str(col(row, 'LONG CODE')) || null;
+    let systemToken = null;
+    if (longCode) {
+      const m = longCode.match(SYSTEM_TOKEN_RE);
+      if (m) systemToken = m[1];
+    }
+
+    // Build raw jsonb from non-canonical columns
+    const raw = {};
+    for (let j = 0; j < row.length; j++) {
+      if (!canonicalIndices.has(j) && headers[j] && row[j] !== '' && row[j] != null) {
+        raw[str(headers[j])] = row[j];
+      }
+    }
+
+    mapped.push({
+      project_id: projectId,
+      part_no: partNo,
+      description: str(col(row, 'PRODUCT', 'DESCRIPTION')) || null,
+      spec: str(col(row, 'SPEC')) || null,
+      nd: str(col(row, 'ND')) || null,
+      category: str(col(row, 'CAT')) || null,
+      qty_ordered: parseNum(col(row, 'QTY (FOR PROCUREMENT)', 'QTY')),
+      qty_received_mto: parseNum(col(row, 'RECEIVED')),
+      unit_of_measure: str(col(row, 'UOM')) || null,
+      weight_kg: parseNum(col(row, 'WEIGHT (KG)')),
+      unit_price_eur: parseNum(col(row, 'UNIT PRICE (\u20AC)', 'UNIT PRICE (EUR)')),
+      origin: str(col(row, 'ORIGIN')) || null,
+      mill: str(col(row, 'MILL')) || null,
+      delivery_time: str(col(row, 'DELIVERY TIME')) || null,
+      long_code: longCode,
+      long_code_system_token: systemToken,
+      raw: Object.keys(raw).length > 0 ? raw : null,
+      imported_at: new Date().toISOString(),
+      imported_from: file.name,
+    });
+  }
+
+  const sb = getSupabase();
+  let inserted = 0;
+
+  for (let i = 0; i < mapped.length; i += MAT_BATCH) {
+    const batch = mapped.slice(i, i + MAT_BATCH);
+    const { data, error } = await sb.from('materials_catalogue')
+      .upsert(batch, { onConflict: 'project_id,part_no' })
+      .select('id');
+    if (error) console.error('[importMaterialsCatalogue] batch error:', error.message);
+    else if (data) inserted += data.length;
+  }
+
+  return {
+    total_rows: mapped.length,
+    inserted,
+    updated: 0,
+    skipped_no_partno: skipped,
+  };
+}
+
+// -- C) Materials Delivery (NOI) ----------------------------------------------
+
+export async function importMaterialsDelivery(file, projectId, headerInfo) {
+  const sb = getSupabase();
+
+  // Step 1: Upsert delivery header
+  const deliveryRow = {
+    project_id: projectId,
+    po_no: headerInfo.po_no,
+    noi_no: headerInfo.noi_no || null,
+    delivery_date: headerInfo.delivery_date || null,
+    supplier: headerInfo.supplier || null,
+    notes: headerInfo.notes || null,
+    imported_at: new Date().toISOString(),
+    imported_from: file.name,
+  };
+
+  const { data: delData, error: delErr } = await sb.from('materials_deliveries')
+    .upsert(deliveryRow, { onConflict: 'project_id,po_no,noi_no' })
+    .select('id')
+    .single();
+
+  if (delErr) throw new Error(`Failed to create delivery: ${delErr.message}`);
+  const deliveryId = delData.id;
+
+  // Delete existing items for this delivery (re-import replaces cleanly)
+  const { error: clearErr } = await sb.from('materials_delivery_items')
+    .delete()
+    .eq('delivery_id', deliveryId);
+  if (clearErr) throw new Error(`Failed to clear existing delivery items before re-import: ${clearErr.message}`);
+
+  // Step 2: Read and parse the Excel
+  const wb = await readFile(file);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rawRows = utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+  if (rawRows.length < 2) return { delivery_id: deliveryId, total_rows: 0, inserted: 0, unmatched_item_codes: [] };
+  const headers = rawRows[0]; // row 1
+  const dataRows = rawRows.slice(1);
+
+  const col = (row, ...names) => cellVal(row, findColumn(headers, ...names));
+
+  // Build catalogue lookup by part_no
+  const catData = await fetchAll(sb.from('materials_catalogue').select('id, part_no').eq('project_id', projectId));
+  const catMap = {};
+  for (const r of catData) catMap[String(r.part_no)] = r.id;
+
+  // Canonical column indices for raw jsonb exclusion
+  const CANONICAL_NAMES = [
+    'ITEM CODE', 'ENGLISH DESCRIPTION', 'DESCRIPTION', 'QTY',
+    'TOTAL WEIGHT', 'SSCC', 'PICK NUMBER', 'HEAT NUMBER',
+    'MANUFACTURER/ORIGIN', 'MANUFACTURER / ORIGIN',
+  ];
+  const canonicalIndices = new Set();
+  for (const name of CANONICAL_NAMES) {
+    const idx = findColumn(headers, name);
+    if (idx >= 0) canonicalIndices.add(idx);
+  }
+
+  const mapped = [];
+  const unmatchedCodes = new Set();
+
+  for (const row of dataRows) {
+    const itemCode = str(col(row, 'ITEM CODE'));
+    const desc = str(col(row, 'ENGLISH DESCRIPTION', 'DESCRIPTION'));
+    if (!itemCode && !desc) continue; // skip blank rows
+
+    const catalogueId = itemCode ? (catMap[itemCode] || null) : null;
+    if (itemCode && !catalogueId) unmatchedCodes.add(itemCode);
+
+    // Build raw jsonb
+    const raw = {};
+    for (let j = 0; j < row.length; j++) {
+      if (!canonicalIndices.has(j) && headers[j] && row[j] !== '' && row[j] != null) {
+        raw[str(headers[j])] = row[j];
+      }
+    }
+
+    mapped.push({
+      delivery_id: deliveryId,
+      catalogue_id: catalogueId,
+      item_code: itemCode || null,
+      description: desc || null,
+      qty: parseNum(col(row, 'QTY')),
+      weight_total_kg: parseNum(col(row, 'TOTAL WEIGHT')),
+      sscc: str(col(row, 'SSCC')) || null,
+      pick_number: str(col(row, 'PICK NUMBER')) || null,
+      heat_number: str(col(row, 'HEAT NUMBER')) || null,
+      manufacturer_origin: str(col(row, 'MANUFACTURER/ORIGIN', 'MANUFACTURER / ORIGIN')) || null,
+      raw: Object.keys(raw).length > 0 ? raw : null,
+    });
+  }
+
+  // Insert in batches
+  let inserted = 0;
+  for (let i = 0; i < mapped.length; i += MAT_BATCH) {
+    const batch = mapped.slice(i, i + MAT_BATCH);
+    const { data, error } = await sb.from('materials_delivery_items')
+      .insert(batch)
+      .select('id');
+    if (error) console.error('[importMaterialsDelivery] batch error:', error.message);
+    else if (data) inserted += data.length;
+  }
+
+  if (unmatchedCodes.size > 0) {
+    console.warn(`[importMaterialsDelivery] ${unmatchedCodes.size} item codes did not match any catalogue entry`);
+  }
+
+  return {
+    delivery_id: deliveryId,
+    total_rows: mapped.length,
+    inserted,
+    unmatched_item_codes: [...unmatchedCodes].slice(0, 20),
+  };
+}
 
 // -- Registry -----------------------------------------------------------------
 

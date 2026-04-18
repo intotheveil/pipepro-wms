@@ -2,15 +2,27 @@ import { useState, useRef } from 'react';
 import { read, utils } from 'xlsx';
 import { useProject } from '../lib/project.jsx';
 import { getSupabase } from '../lib/supabase';
-import { IMPORTERS, detectImporter, parseSheet } from '../lib/importers';
+import { IMPORTERS, detectImporter, parseSheet, importMaterialsBOM, importMaterialsCatalogue, importMaterialsDelivery } from '../lib/importers';
 
 const BATCH_SIZE = 200;
 
 const STEPS = { UPLOAD: 0, PREVIEW: 1, IMPORTING: 2, DONE: 3 };
 
+function todayStr() {
+  return new Date().toISOString().split('T')[0];
+}
+
 export default function Import() {
   const project = useProject();
   const fileRef = useRef(null);
+
+  // Materials import state
+  const [matStatus, setMatStatus] = useState(null);   // { type, running, result, error }
+  const [deliveryModal, setDeliveryModal] = useState(false);
+  const [deliveryForm, setDeliveryForm] = useState({ po_no: '', noi_no: '', delivery_date: todayStr(), supplier: '', notes: '' });
+  const deliveryFileRef = useRef(null);
+  const bomFileRef = useRef(null);
+  const mtoFileRef = useRef(null);
 
   // State
   const [step, setStep] = useState(STEPS.UPLOAD);
@@ -396,6 +408,148 @@ export default function Import() {
           <button onClick={reset} style={btnPrimary}>Import another file</button>
         </div>
       )}
+
+      {/* ================================================================= */}
+      {/* MATERIALS IMPORTS                                                  */}
+      {/* ================================================================= */}
+      <div style={{ marginTop: 'var(--space-xl)', borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-lg)' }}>
+        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 'var(--space-md)' }}>Materials</h2>
+        <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap', marginBottom: 'var(--space-md)' }}>
+          {/* BOM */}
+          <div style={matCard}>
+            <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Import Materials BOM</p>
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 'var(--space-sm)' }}>Per-isometric material list</p>
+            <input ref={bomFileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
+              onChange={async (e) => {
+                const f = e.target.files?.[0]; if (!f) return;
+                e.target.value = '';
+                setMatStatus({ type: 'bom', running: true, result: null, error: null });
+                try {
+                  const result = await importMaterialsBOM(f, project.id);
+                  setMatStatus({ type: 'bom', running: false, result, error: null });
+                } catch (err) {
+                  console.error('[Import/BOM]', err);
+                  setMatStatus({ type: 'bom', running: false, result: null, error: err.message });
+                }
+              }} />
+            <button onClick={() => bomFileRef.current?.click()} style={btnPrimary}
+              disabled={matStatus?.type === 'bom' && matStatus.running}>
+              {matStatus?.type === 'bom' && matStatus.running ? 'Importing...' : 'Select File'}
+            </button>
+          </div>
+
+          {/* MTO Catalogue */}
+          <div style={matCard}>
+            <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Import Project MTO</p>
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 'var(--space-sm)' }}>Master catalogue from MTO spreadsheet</p>
+            <input ref={mtoFileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
+              onChange={async (e) => {
+                const f = e.target.files?.[0]; if (!f) return;
+                e.target.value = '';
+                setMatStatus({ type: 'mto', running: true, result: null, error: null });
+                try {
+                  const result = await importMaterialsCatalogue(f, project.id);
+                  setMatStatus({ type: 'mto', running: false, result, error: null });
+                } catch (err) {
+                  console.error('[Import/MTO]', err);
+                  setMatStatus({ type: 'mto', running: false, result: null, error: err.message });
+                }
+              }} />
+            <button onClick={() => mtoFileRef.current?.click()} style={btnPrimary}
+              disabled={matStatus?.type === 'mto' && matStatus.running}>
+              {matStatus?.type === 'mto' && matStatus.running ? 'Importing...' : 'Select File'}
+            </button>
+          </div>
+
+          {/* Delivery / NOI */}
+          <div style={matCard}>
+            <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Import Material Delivery / NOI</p>
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 'var(--space-sm)' }}>Delivery note with line items</p>
+            <button onClick={() => { setDeliveryModal(true); setDeliveryForm({ po_no: '', noi_no: '', delivery_date: todayStr(), supplier: '', notes: '' }); }} style={btnPrimary}
+              disabled={matStatus?.type === 'delivery' && matStatus.running}>
+              {matStatus?.type === 'delivery' && matStatus.running ? 'Importing...' : 'Enter Details'}
+            </button>
+          </div>
+        </div>
+
+        {/* Materials import result */}
+        {matStatus && !matStatus.running && (matStatus.result || matStatus.error) && (
+          <div style={{
+            padding: 'var(--space-md)',
+            background: matStatus.error ? '#fef2f2' : '#f0fdf4',
+            border: `1px solid ${matStatus.error ? '#fecaca' : '#bbf7d0'}`,
+            borderRadius: 'var(--radius-md)',
+            marginBottom: 'var(--space-md)',
+          }}>
+            {matStatus.error ? (
+              <p style={{ fontSize: 13, color: '#991b1b' }}>Error: {matStatus.error}</p>
+            ) : (
+              <div style={{ fontSize: 13, color: '#065f46' }}>
+                <p style={{ fontWeight: 600, marginBottom: 4 }}>
+                  {matStatus.type === 'bom' ? 'BOM' : matStatus.type === 'mto' ? 'MTO Catalogue' : 'Delivery'} import complete
+                </p>
+                {Object.entries(matStatus.result).map(([k, v]) => (
+                  <p key={k} style={{ marginBottom: 2 }}>
+                    {k}: {Array.isArray(v) ? (v.length > 0 ? v.join(', ') : 'none') : String(v)}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Delivery modal */}
+      {deliveryModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}
+          onClick={() => setDeliveryModal(false)}>
+          <div style={{ background: '#fff', borderRadius: 'var(--radius-lg)', padding: 24, minWidth: 400, maxWidth: 480, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+            onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 'var(--space-md)' }}>Import Material Delivery</h3>
+            {[
+              ['po_no', 'PO Number', 'text', true],
+              ['noi_no', 'NOI / Delivery Number', 'text', false],
+              ['delivery_date', 'Delivery Date', 'date', true],
+              ['supplier', 'Supplier', 'text', false],
+            ].map(([key, label, type, req]) => (
+              <div key={key} style={{ marginBottom: 'var(--space-sm)' }}>
+                <label style={matLbl}>{label}{req ? ' *' : ''}</label>
+                <input type={type} value={deliveryForm[key] || ''} onChange={(e) => setDeliveryForm(prev => ({ ...prev, [key]: e.target.value }))}
+                  style={matInput} />
+              </div>
+            ))}
+            <div style={{ marginBottom: 'var(--space-sm)' }}>
+              <label style={matLbl}>Notes</label>
+              <textarea value={deliveryForm.notes || ''} rows={2} onChange={(e) => setDeliveryForm(prev => ({ ...prev, notes: e.target.value }))}
+                style={{ ...matInput, resize: 'vertical', fontFamily: 'inherit' }} />
+            </div>
+            <div style={{ marginBottom: 'var(--space-md)' }}>
+              <label style={matLbl}>Excel File *</label>
+              <input ref={deliveryFileRef} type="file" accept=".xlsx,.xls" style={{ fontSize: 13 }} />
+            </div>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'flex-end' }}>
+              <button onClick={() => setDeliveryModal(false)} style={btnSecondary}>Cancel</button>
+              <button
+                disabled={!deliveryForm.po_no || !deliveryForm.delivery_date}
+                onClick={async () => {
+                  const f = deliveryFileRef.current?.files?.[0];
+                  if (!f || !deliveryForm.po_no) return;
+                  setDeliveryModal(false);
+                  setMatStatus({ type: 'delivery', running: true, result: null, error: null });
+                  try {
+                    const result = await importMaterialsDelivery(f, project.id, deliveryForm);
+                    setMatStatus({ type: 'delivery', running: false, result, error: null });
+                  } catch (err) {
+                    console.error('[Import/Delivery]', err);
+                    setMatStatus({ type: 'delivery', running: false, result: null, error: err.message });
+                  }
+                }}
+                style={btnPrimary}
+              >Import</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -481,4 +635,31 @@ const btnSecondary = {
   borderRadius: 'var(--radius-md)',
   fontSize: 13,
   cursor: 'pointer',
+};
+
+const matCard = {
+  flex: '1 1 200px',
+  padding: 'var(--space-md)',
+  background: 'var(--color-surface)',
+  border: '1px solid var(--color-border)',
+  borderRadius: 'var(--radius-lg)',
+};
+
+const matLbl = {
+  display: 'block',
+  fontSize: 11,
+  fontWeight: 600,
+  color: 'var(--color-text-secondary)',
+  marginBottom: 4,
+  textTransform: 'uppercase',
+  letterSpacing: '0.03em',
+};
+
+const matInput = {
+  width: '100%',
+  padding: '8px var(--space-sm)',
+  border: '1px solid var(--color-border)',
+  borderRadius: 'var(--radius-sm)',
+  fontSize: 13,
+  outline: 'none',
 };
