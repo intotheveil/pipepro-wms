@@ -301,7 +301,7 @@ const spoolDmpImporter = {
     return {
       project_id: projectId,
       spool_no: spoolNo,
-      _rawDrawingNo: str(col('ISO DRAWING', 'ISO', 'DRAWING', 'DRAWING NO', 'ISO NO')),
+      _rawFastNo: str(col('FN', 'FAST NO', 'FAST No', 'FAST No.', 'FAST_NO', 'FAST NUMBER', 'FAST')),
       shop_field,
       material_checked: parseBool(col('MATERIAL CHECKED', 'MAT CHECK', 'MAT CHECKED')),
       material_check_date: parseDate(col('MATERIAL CHECK DATE', 'MAT CHECK DATE')),
@@ -326,20 +326,27 @@ const spoolDmpImporter = {
   previewColumns: ['spool_no', 'shop_field', 'fabricated', 'qc_released', 'painted', 'erected'],
 
   async resolveFK(mapped, projectId, supabase) {
-    // Bulk lookup iso_id from drawing_no
-    const drawingNos = [...new Set(mapped.map((r) => r._rawDrawingNo).filter(Boolean))];
+    // Bulk lookup iso_id from fast_no (unique per project, unlike drawing_no)
+    const fastNos = [...new Set(mapped.map((r) => r._rawFastNo).filter(Boolean))];
     const isoMap = {};
-    if (drawingNos.length > 0) {
+    if (fastNos.length > 0) {
       const { data } = await supabase
         .from('iso_register')
-        .select('id, drawing_no')
+        .select('id, fast_no')
         .eq('project_id', projectId)
-        .in('drawing_no', drawingNos);
-      for (const r of data || []) isoMap[r.drawing_no] = r.id;
+        .in('fast_no', fastNos);
+      for (const r of data || []) isoMap[String(r.fast_no)] = r.id;
     }
+    let missingFnCount = 0;
     for (const r of mapped) {
-      r.iso_id = isoMap[r._rawDrawingNo] || null;
-      delete r._rawDrawingNo;
+      const fn = String(r._rawFastNo || '');
+      const isoId = isoMap[fn] || null;
+      if (!isoId && fn) missingFnCount++;
+      r.iso_id = isoId;
+      delete r._rawFastNo;
+    }
+    if (missingFnCount > 0) {
+      console.warn(`[spools import] ${missingFnCount} rows had a FAST NO that did not match any ISO`);
     }
   },
 };
@@ -423,7 +430,7 @@ const weldLogImporter = {
     return {
       project_id: projectId,
       weld_id: weldId,
-      _rawDrawingNo: str(col('DRAWING NO', 'DRAWING No', 'ISO DRAWING', 'ISO')),
+      _rawFastNo: str(col('FN', 'FAST NO', 'FAST No', 'FAST No.', 'FAST_NO', 'FAST NUMBER', 'FAST')),
       _rawSpoolNo: str(col('SPOOL ID', 'SPOOL', 'SPOOL NO')),
       joint_type,
       shop_field,
@@ -443,16 +450,16 @@ const weldLogImporter = {
   previewColumns: ['weld_id', 'joint_type', 'dia_inch', 'shop_field', 'status', 'weld_date'],
 
   async resolveFK(mapped, projectId, supabase) {
-    // Bulk lookup iso_id from drawing_no
-    const drawingNos = [...new Set(mapped.map((r) => r._rawDrawingNo).filter(Boolean))];
+    // Bulk lookup iso_id from fast_no (unique per project, unlike drawing_no)
+    const fastNos = [...new Set(mapped.map((r) => r._rawFastNo).filter(Boolean))];
     const isoMap = {};
-    if (drawingNos.length > 0) {
+    if (fastNos.length > 0) {
       const { data } = await supabase
         .from('iso_register')
-        .select('id, drawing_no')
+        .select('id, fast_no')
         .eq('project_id', projectId)
-        .in('drawing_no', drawingNos);
-      for (const r of data || []) isoMap[r.drawing_no] = r.id;
+        .in('fast_no', fastNos);
+      for (const r of data || []) isoMap[String(r.fast_no)] = r.id;
     }
 
     // Bulk lookup spool_id from spool_no + iso_id
@@ -470,14 +477,20 @@ const weldLogImporter = {
       }
     }
 
+    let missingFnCount = 0;
     for (const r of mapped) {
-      const isoId = isoMap[r._rawDrawingNo] || null;
+      const fn = String(r._rawFastNo || '');
+      const isoId = isoMap[fn] || null;
+      if (!isoId && fn) missingFnCount++;
       r.iso_id = isoId;
       r.spool_id = spoolMap[`${r._rawSpoolNo}::${isoId || ''}`]
         || spoolMap[r._rawSpoolNo]
         || null;
-      delete r._rawDrawingNo;
+      delete r._rawFastNo;
       delete r._rawSpoolNo;
+    }
+    if (missingFnCount > 0) {
+      console.warn(`[weld_log import] ${missingFnCount} rows had a FAST NO that did not match any ISO`);
     }
   },
 };
