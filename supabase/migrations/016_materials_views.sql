@@ -1,32 +1,40 @@
 -- 016 — Materialized availability views for the Materials page
 
 -- ISO-level availability (one row per ISO that has BOM rows)
-CREATE OR REPLACE VIEW materials_iso_availability AS
+-- NULL-qty positions are counted in total but excluded from availability denominators
+DROP VIEW IF EXISTS materials_iso_availability;
+
+CREATE VIEW materials_iso_availability AS
 WITH bom_per_scope AS (
   SELECT
     b.project_id, b.iso_id, b.scope,
     COUNT(*) AS total_positions,
+    COUNT(*) FILTER (WHERE b.qty_num IS NOT NULL) AS total_with_qty,
+    COUNT(*) FILTER (WHERE b.qty_num IS NULL) AS null_qty_count,
     COUNT(*) FILTER (
-      WHERE b.catalogue_id IS NOT NULL
-        AND (b.qty_num IS NULL OR EXISTS (
+      WHERE b.qty_num IS NOT NULL
+        AND b.catalogue_id IS NOT NULL
+        AND EXISTS (
           SELECT 1 FROM materials_catalogue c
           WHERE c.id = b.catalogue_id AND c.qty_ordered >= b.qty_num
-        ))
+        )
     ) AS procured_count,
     COUNT(*) FILTER (
-      WHERE b.catalogue_id IS NOT NULL
-        AND (b.qty_num IS NULL OR (
+      WHERE b.qty_num IS NOT NULL
+        AND b.catalogue_id IS NOT NULL
+        AND (
           SELECT COALESCE(SUM(di.qty), 0)
           FROM materials_delivery_items di
           WHERE di.catalogue_id = b.catalogue_id
-        ) >= b.qty_num)
+        ) >= b.qty_num
     ) AS delivered_count,
     COUNT(*) FILTER (
-      WHERE b.qty_num IS NULL OR (
-        SELECT COALESCE(SUM(a.qty_allocated), 0)
-        FROM materials_allocations a
-        WHERE a.bom_id = b.id
-      ) >= b.qty_num
+      WHERE b.qty_num IS NOT NULL
+        AND (
+          SELECT COALESCE(SUM(a.qty_allocated), 0)
+          FROM materials_allocations a
+          WHERE a.bom_id = b.id
+        ) >= b.qty_num
     ) AS allocated_count
   FROM materials_bom b
   WHERE b.is_current = true AND b.iso_id IS NOT NULL
@@ -39,10 +47,14 @@ SELECT
   ir.drawing_no,
   ir.system,
   COALESCE(fab.total_positions, 0) AS fab_total,
+  COALESCE(fab.total_with_qty, 0) AS fab_total_with_qty,
+  COALESCE(fab.null_qty_count, 0) AS fab_null_qty,
   COALESCE(fab.procured_count, 0) AS fab_procured,
   COALESCE(fab.delivered_count, 0) AS fab_delivered,
   COALESCE(fab.allocated_count, 0) AS fab_allocated,
   COALESCE(erect.total_positions, 0) AS erect_total,
+  COALESCE(erect.total_with_qty, 0) AS erect_total_with_qty,
+  COALESCE(erect.null_qty_count, 0) AS erect_null_qty,
   COALESCE(erect.procured_count, 0) AS erect_procured,
   COALESCE(erect.delivered_count, 0) AS erect_delivered,
   COALESCE(erect.allocated_count, 0) AS erect_allocated

@@ -267,6 +267,7 @@ function BomByIsoTab({ project }) {
             ) : sorted.map(row => {
               const isExpanded = expandedId === row.iso_id;
               const totalPos = row.fab_total + row.erect_total;
+              const nullQtyCount = (row.fab_null_qty || 0) + (row.erect_null_qty || 0);
               return (
                 <Fragment key={row.iso_id}>
                   <tr
@@ -275,18 +276,24 @@ function BomByIsoTab({ project }) {
                     onMouseEnter={(e) => { if (!isExpanded) e.currentTarget.style.background = 'var(--color-bg)'; }}
                     onMouseLeave={(e) => { if (!isExpanded) e.currentTarget.style.background = 'transparent'; }}
                   >
-                    <td style={{ ...td, fontWeight: 600 }}>{row.fast_no}</td>
+                    <td style={{ ...td, fontWeight: 600 }}>
+                      {row.fast_no}
+                      {nullQtyCount > 0 && (
+                        <span title={`${nullQtyCount} position${nullQtyCount !== 1 ? 's' : ''} with unknown qty excluded from availability`}
+                          style={{ marginLeft: 4, fontSize: 12, cursor: 'help' }}>{'\u26A0\uFE0F'}</span>
+                      )}
+                    </td>
                     <td style={td}>{row.drawing_no || '\u2014'}</td>
                     <td style={td}>{row.system || '\u2014'}</td>
                     <td style={td}>{totalPos}</td>
-                    {/* Fab */}
-                    <td style={td}><AvailBar label="" count={row.fab_procured} total={row.fab_total} /></td>
-                    <td style={td}><AvailBar label="" count={row.fab_delivered} total={row.fab_total} /></td>
-                    <td style={td}><AvailBar label="" count={row.fab_allocated} total={row.fab_total} /></td>
-                    {/* Erection */}
-                    <td style={td}><AvailBar label="" count={row.erect_procured} total={row.erect_total} /></td>
-                    <td style={td}><AvailBar label="" count={row.erect_delivered} total={row.erect_total} /></td>
-                    <td style={td}><AvailBar label="" count={row.erect_allocated} total={row.erect_total} /></td>
+                    {/* Fab — use total_with_qty as denominator */}
+                    <td style={td}><AvailBar label="" count={row.fab_procured} total={row.fab_total_with_qty} /></td>
+                    <td style={td}><AvailBar label="" count={row.fab_delivered} total={row.fab_total_with_qty} /></td>
+                    <td style={td}><AvailBar label="" count={row.fab_allocated} total={row.fab_total_with_qty} /></td>
+                    {/* Erection — use total_with_qty as denominator */}
+                    <td style={td}><AvailBar label="" count={row.erect_procured} total={row.erect_total_with_qty} /></td>
+                    <td style={td}><AvailBar label="" count={row.erect_delivered} total={row.erect_total_with_qty} /></td>
+                    <td style={td}><AvailBar label="" count={row.erect_allocated} total={row.erect_total_with_qty} /></td>
                     <td style={td}>
                       <span style={{ fontSize: 14, color: 'var(--color-text-muted)', transform: isExpanded ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.2s' }}>&#9654;</span>
                     </td>
