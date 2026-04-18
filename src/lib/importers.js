@@ -708,6 +708,15 @@ export async function importMaterialsBOM(file, projectId) {
 
   const col = (row, ...names) => cellVal(row, findColumn(headers, ...names));
 
+  // Filter phantom/empty rows BEFORE iterating.
+  // A real BOM row must have both FN and pos.
+  const realRows = dataRows.filter(row => {
+    const fn = str(col(row, 'FN', 'FAST NO', 'FAST No', 'FAST No.', 'FAST_NO', 'FAST NUMBER', 'FAST'));
+    const pos = col(row, 'POS', 'POSITION');
+    return fn && (pos !== null && pos !== undefined && pos !== '');
+  });
+  console.info(`[importMaterialsBOM] filter: ${dataRows.length} raw rows → ${realRows.length} real rows with FN+pos`);
+
   const sb = getSupabase();
 
   // Build iso lookup by fast_no
@@ -718,11 +727,8 @@ export async function importMaterialsBOM(file, projectId) {
   const mapped = [];
   const unmatchedFns = new Set();
 
-  for (const row of dataRows) {
+  for (const row of realRows) {
     const pos = col(row, 'POS', 'POSITION');
-    const desc = str(col(row, 'DESCRIPTION', 'DESC'));
-    if (pos == null && !desc) continue; // skip blank rows
-
     const posNum = parseInt(String(pos), 10);
     if (isNaN(posNum)) continue;
 
@@ -731,6 +737,7 @@ export async function importMaterialsBOM(file, projectId) {
     if (!isoId && fnRaw) unmatchedFns.add(fnRaw);
 
     const rev = str(col(row, 'REVISION', 'REV')) || 'R0';
+    const desc = str(col(row, 'DESCRIPTION', 'DESC'));
     const { qty_raw, qty_num, qty_unit } = parseQty(col(row, 'QTY', 'QUANTITY'));
 
     mapped.push({
@@ -753,9 +760,18 @@ export async function importMaterialsBOM(file, projectId) {
     });
   }
 
+  // Dedup by composite key — last wins
+  const bomByKey = new Map();
+  for (const r of mapped) {
+    const key = `${r.iso_id || r.fn_text}|${r.pos}|${r.revision}`;
+    bomByKey.set(key, r);
+  }
+  const deduped = Array.from(bomByKey.values());
+  console.info(`[importMaterialsBOM] dedup: ${mapped.length} mapped → ${deduped.length} unique (iso_id|pos|revision)`);
+
   // Revision supersede: mark old revisions as not current
   const revGroups = {};
-  for (const r of mapped) {
+  for (const r of deduped) {
     if (!r.iso_id) continue;
     const key = `${r.iso_id}::${r.revision}`;
     revGroups[key] = { iso_id: r.iso_id, revision: r.revision };
@@ -771,9 +787,8 @@ export async function importMaterialsBOM(file, projectId) {
 
   // Upsert in batches
   let inserted = 0;
-  let updated = 0;
-  for (let i = 0; i < mapped.length; i += MAT_BATCH) {
-    const batch = mapped.slice(i, i + MAT_BATCH);
+  for (let i = 0; i < deduped.length; i += MAT_BATCH) {
+    const batch = deduped.slice(i, i + MAT_BATCH);
     const { data, error } = await sb.from('materials_bom')
       .upsert(batch, { onConflict: 'project_id,iso_id,pos,revision' })
       .select('id');
@@ -786,9 +801,9 @@ export async function importMaterialsBOM(file, projectId) {
   }
 
   return {
-    total_rows: mapped.length,
+    total_rows: realRows.length,
+    deduped_count: deduped.length,
     inserted,
-    updated: 0,
     unmatched_fn_count: unmatchedFns.size,
     unmatched_fns: [...unmatchedFns].slice(0, 20),
   };
@@ -813,6 +828,14 @@ export async function importMaterialsCatalogue(file, projectId) {
 
   const col = (row, ...names) => cellVal(row, findColumn(headers, ...names));
 
+  // Filter phantom/empty rows BEFORE iterating.
+  // A real row must have a non-empty part_no.
+  const realRows = dataRows.filter(row => {
+    const partNo = str(col(row, 'PART NO#', 'PART NO'));
+    return partNo && partNo.toUpperCase() !== 'NAN' && partNo.trim() !== '';
+  });
+  console.info(`[importMaterialsCatalogue] filter: ${dataRows.length} raw rows → ${realRows.length} real rows with part_no`);
+
   // Canonical column indices (pre-compute for raw jsonb exclusion)
   const CANONICAL_NAMES = [
     'PART NO#', 'PART NO', 'PRODUCT', 'DESCRIPTION', 'SPEC', 'ND', 'CAT',
@@ -827,12 +850,10 @@ export async function importMaterialsCatalogue(file, projectId) {
   }
 
   const mapped = [];
-  let skipped = 0;
   const SYSTEM_TOKEN_RE = /^APP-\d+-([A-Z0-9_]+)-/;
 
-  for (const row of dataRows) {
+  for (const row of realRows) {
     const partNo = str(col(row, 'PART NO#', 'PART NO'));
-    if (!partNo || partNo.toUpperCase() === 'NAN') { skipped++; continue; }
 
     const longCode = str(col(row, 'LONG CODE')) || null;
     let systemToken = null;
@@ -872,11 +893,32 @@ export async function importMaterialsCatalogue(file, projectId) {
     });
   }
 
+  // Dedup by part_no — aggregate numeric fields across duplicate rows
+  const byPartNo = new Map();
+  for (const row of mapped) {
+    const existing = byPartNo.get(row.part_no);
+    if (!existing) {
+      byPartNo.set(row.part_no, { ...row });
+    } else {
+      // Sum quantities and weight across duplicate rows
+      existing.qty_ordered      = (Number(existing.qty_ordered) || 0) + (Number(row.qty_ordered) || 0);
+      existing.qty_received_mto = (Number(existing.qty_received_mto) || 0) + (Number(row.qty_received_mto) || 0);
+      existing.weight_kg        = (Number(existing.weight_kg) || 0) + (Number(row.weight_kg) || 0);
+      // unit_price_eur: DO NOT sum (per-unit price), keep first-seen
+      // description, spec, nd, category, origin, mill, long_code: keep first-seen, warn on divergence
+      if (row.description && existing.description && row.description !== existing.description) {
+        console.warn(`[importMaterialsCatalogue] part_no ${row.part_no}: differing descriptions across rows — keeping first-seen`);
+      }
+    }
+  }
+  const deduped = Array.from(byPartNo.values());
+  console.info(`[importMaterialsCatalogue] dedup: ${mapped.length} mapped rows → ${deduped.length} unique part_no (quantities aggregated)`);
+
   const sb = getSupabase();
   let inserted = 0;
 
-  for (let i = 0; i < mapped.length; i += MAT_BATCH) {
-    const batch = mapped.slice(i, i + MAT_BATCH);
+  for (let i = 0; i < deduped.length; i += MAT_BATCH) {
+    const batch = deduped.slice(i, i + MAT_BATCH);
     const { data, error } = await sb.from('materials_catalogue')
       .upsert(batch, { onConflict: 'project_id,part_no' })
       .select('id');
@@ -885,10 +927,10 @@ export async function importMaterialsCatalogue(file, projectId) {
   }
 
   return {
-    total_rows: mapped.length,
+    total_rows: realRows.length,
+    deduped_count: deduped.length,
     inserted,
     updated: 0,
-    skipped_no_partno: skipped,
   };
 }
 
@@ -934,6 +976,13 @@ export async function importMaterialsDelivery(file, projectId, headerInfo) {
 
   const col = (row, ...names) => cellVal(row, findColumn(headers, ...names));
 
+  // Filter phantom/empty rows — a real delivery item must have an item code
+  const realRows = dataRows.filter(row => {
+    const ic = str(col(row, 'ITEM CODE'));
+    return ic && ic.trim() !== '';
+  });
+  console.info(`[importMaterialsDelivery] filter: ${dataRows.length} raw rows → ${realRows.length} real rows with item_code`);
+
   // Build catalogue lookup by part_no
   const catData = await fetchAll(sb.from('materials_catalogue').select('id, part_no').eq('project_id', projectId));
   const catMap = {};
@@ -954,10 +1003,9 @@ export async function importMaterialsDelivery(file, projectId, headerInfo) {
   const mapped = [];
   const unmatchedCodes = new Set();
 
-  for (const row of dataRows) {
+  for (const row of realRows) {
     const itemCode = str(col(row, 'ITEM CODE'));
     const desc = str(col(row, 'ENGLISH DESCRIPTION', 'DESCRIPTION'));
-    if (!itemCode && !desc) continue; // skip blank rows
 
     const catalogueId = itemCode ? (catMap[itemCode] || null) : null;
     if (itemCode && !catalogueId) unmatchedCodes.add(itemCode);
