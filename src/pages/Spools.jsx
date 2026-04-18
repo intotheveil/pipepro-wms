@@ -20,37 +20,51 @@ const STAGES = [
 ];
 
 const EDIT_STAGES = [
-  { label: 'Material Checked', bool: 'material_checked', date: 'material_check_date' },
-  { label: 'Fab Started',      bool: 'fab_started',      date: 'fab_start_date' },
-  { label: 'Fabricated',       bool: 'fabricated',        date: 'fabricated_date' },
-  { label: 'QC Released',      bool: 'qc_released',      date: 'qc_release_date' },
-  { label: 'Sent to Paint',    bool: 'sent_to_paint',    date: 'sent_to_paint_date' },
-  { label: 'Painted',          bool: 'painted',           date: 'painted_date' },
-  { label: 'At Laydown',       bool: 'at_laydown',        date: 'laydown_date' },
-  { label: 'Erected',          bool: 'erected',           date: 'erected_date' },
+  { label: 'Material Checked', bool: 'material_checked', date: 'material_check_date', report: 'mat_check_report' },
+  { label: 'Fab Started',      bool: 'fab_started',      date: 'fab_start_date',      report: 'fab_started_report' },
+  { label: 'Fabricated',       bool: 'fabricated',        date: 'fabricated_date',      report: 'fabricated_report' },
+  { label: 'QC Released',      bool: 'qc_released',      date: 'qc_release_date',     report: 'qc_released_report' },
+  { label: 'Sent to Paint',    bool: 'sent_to_paint',    date: 'sent_to_paint_date',  report: 'paint_report' },
+  { label: 'Painted',          bool: 'painted',           date: 'painted_date',         report: 'painted_report' },
+  { label: 'At Laydown',       bool: 'at_laydown',        date: 'laydown_date',         report: 'laydown_report' },
+  { label: 'Erected',          bool: 'erected',           date: 'erected_date',         report: 'erected_report' },
 ];
 
 const PIPELINE_LETTERS = [
-  { bool: 'material_checked', letter: 'M' },
-  { bool: 'fab_started',      letter: 'F' },
-  { bool: 'fabricated',       letter: 'W' },
-  { bool: 'qc_released',     letter: 'Q' },
-  { bool: 'painted',          letter: 'P' },
-  { bool: 'at_laydown',      letter: 'L' },
-  { bool: 'erected',          letter: 'E' },
+  { bool: 'material_checked', report: 'mat_check_report',    letter: 'M' },
+  { bool: 'fab_started',      report: 'fab_started_report',  letter: 'F' },
+  { bool: 'fabricated',       report: 'fabricated_report',   letter: 'W' },
+  { bool: 'qc_released',     report: 'qc_released_report',  letter: 'Q' },
+  { bool: 'painted',          report: 'painted_report',      letter: 'P' },
+  { bool: 'at_laydown',      report: 'laydown_report',       letter: 'L' },
+  { bool: 'erected',          report: 'erected_report',      letter: 'E' },
 ];
 
 function PipelineBadges({ row }) {
   return (
     <div style={{ display: 'flex', gap: 2 }}>
-      {PIPELINE_LETTERS.map((s) => (
-        <span key={s.letter} style={{
-          display: 'inline-block', width: 20, height: 20, lineHeight: '20px',
-          textAlign: 'center', borderRadius: 3, fontSize: 10, fontWeight: 600,
-          background: row[s.bool] ? '#22c55e' : '#e5e7eb',
-          color: row[s.bool] ? '#fff' : '#9ca3af',
-        }}>{s.letter}</span>
-      ))}
+      {PIPELINE_LETTERS.map((s) => {
+        const done = !!row[s.bool];
+        const hasReport = !!row[s.report];
+        return (
+          <span key={s.letter} style={{
+            display: 'inline-block', width: 20, height: 20, lineHeight: '20px',
+            textAlign: 'center', borderRadius: 3, fontSize: 10, fontWeight: 600,
+            background: done ? (hasReport ? '#15803d' : '#22c55e') : '#e5e7eb',
+            color: done ? '#fff' : '#9ca3af',
+            position: 'relative',
+          }}>
+            {s.letter}
+            {done && hasReport && (
+              <span style={{
+                position: 'absolute', top: 1, right: 1,
+                width: 5, height: 5, borderRadius: '50%',
+                background: '#fff',
+              }} />
+            )}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -152,6 +166,10 @@ export default function Spools() {
   const [toast, setToast]             = useState(null);
   const [generating, setGenerating]   = useState(false);
 
+  // report ID modal
+  const [reportModal, setReportModal] = useState(null); // { stage, report }
+  const [reportValue, setReportValue] = useState('');
+
   // filters
   const [search, setSearch]         = useState('');
   const [fShopField, setFShopField] = useState('');
@@ -202,6 +220,22 @@ export default function Spools() {
       setTimeout(() => setErrorId(null), 3000);
     }
     setSavingId(null);
+  }
+
+  async function batchSetReport() {
+    if (!reportModal || !reportValue || selectedIds.size === 0) return;
+    setSavingId('batch');
+    const sb = getSupabase();
+    const updates = { [reportModal.report]: reportValue };
+    for (const id of selectedIds) {
+      await sb.from('spools').update(updates).eq('id', id);
+    }
+    setRows(prev => prev.map(r => selectedIds.has(r.id) ? { ...r, ...updates } : r));
+    setSavingId(null);
+    setReportModal(null);
+    setReportValue('');
+    setToast(`Report ID set on ${selectedIds.size} spools`);
+    setTimeout(() => setToast(null), 3000);
   }
 
   // -- filter -----------------------------------------------------------------
@@ -352,6 +386,21 @@ export default function Spools() {
                   disabled={selectedIds.size === 0 || generating}>
                   Release for Site
                 </button>
+                <div style={{ borderLeft: '1px solid var(--color-border)', height: 20 }} />
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const stage = EDIT_STAGES.find(s => s.report === e.target.value);
+                    if (stage) { setReportModal(stage); setReportValue(''); }
+                  }}
+                  style={sSt}
+                  disabled={selectedIds.size === 0}
+                >
+                  <option value="">Set Report ID</option>
+                  {EDIT_STAGES.map(s => (
+                    <option key={s.report} value={s.report}>{s.label}</option>
+                  ))}
+                </select>
                 <div style={{ borderLeft: '1px solid var(--color-border)', height: 20 }} />
                 <button onClick={exportXlsx} style={bSec}>Export</button>
                 <button onClick={() => { setSelectMode(false); setSelectedIds(new Set()); }} style={bSec}>Clear</button>
@@ -519,10 +568,11 @@ export default function Spools() {
                                   )}
                                 </div>
 
-                                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '8px 12px', alignItems: 'center' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: '8px 12px', alignItems: 'center' }}>
                                   {EDIT_STAGES.map((stage) => {
                                     const checked = !!row[stage.bool];
                                     const dateVal = row[stage.date] ? String(row[stage.date]).split('T')[0] : '';
+                                    const reportVal = row[stage.report] || '';
 
                                     return (
                                       <Fragment key={stage.bool}>
@@ -533,7 +583,7 @@ export default function Spools() {
                                             onChange={(e) => {
                                               e.stopPropagation();
                                               if (checked) {
-                                                autoSave(row.id, { [stage.bool]: false, [stage.date]: null });
+                                                autoSave(row.id, { [stage.bool]: false, [stage.date]: null, [stage.report]: null });
                                               } else {
                                                 autoSave(row.id, { [stage.bool]: true, [stage.date]: dateVal || today() });
                                               }
@@ -549,19 +599,39 @@ export default function Spools() {
                                           onClick={(e) => e.stopPropagation()}
                                           onChange={(e) => {
                                             e.stopPropagation();
-                                            const newDate = e.target.value || null;
-                                            autoSave(row.id, { [stage.date]: newDate });
+                                            autoSave(row.id, { [stage.date]: e.target.value || null });
                                           }}
                                           style={{
                                             padding: '4px 8px',
                                             border: '1px solid var(--color-border)',
                                             borderRadius: 'var(--radius-sm)',
-                                            fontSize: 12,
-                                            outline: 'none',
-                                            background: '#fff',
-                                            width: 150,
+                                            fontSize: 12, outline: 'none',
+                                            background: '#fff', width: 140,
                                           }}
                                         />
+                                        {checked ? (
+                                          <input
+                                            type="text"
+                                            defaultValue={reportVal}
+                                            placeholder="Report / Cert ID"
+                                            onClick={(e) => e.stopPropagation()}
+                                            onBlur={(e) => {
+                                              const val = e.target.value;
+                                              if (val !== reportVal) {
+                                                autoSave(row.id, { [stage.report]: val || null });
+                                              }
+                                            }}
+                                            style={{
+                                              padding: '4px 8px',
+                                              border: '1px solid var(--color-border)',
+                                              borderRadius: 'var(--radius-sm)',
+                                              fontSize: 12, outline: 'none',
+                                              background: '#fff', width: 160,
+                                            }}
+                                          />
+                                        ) : (
+                                          <span />
+                                        )}
                                       </Fragment>
                                     );
                                   })}
@@ -634,6 +704,40 @@ export default function Spools() {
             </div>
           </>
         )}
+        {/* Report ID Modal */}
+        {reportModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}
+            onClick={() => setReportModal(null)}>
+            <div style={{ background: '#fff', borderRadius: 'var(--radius-lg)',
+              padding: 24, minWidth: 360, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}
+              onClick={(e) => e.stopPropagation()}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
+                Set Report ID
+              </h3>
+              <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 16 }}>
+                Stage: <b>{reportModal.label}</b> &mdash; {selectedIds.size} spool{selectedIds.size !== 1 ? 's' : ''}
+              </p>
+              <label style={{ display: 'block', marginBottom: 16 }}>
+                <span style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)',
+                  marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                  Report / Cert ID
+                </span>
+                <input type="text" value={reportValue} onChange={(e) => setReportValue(e.target.value)}
+                  placeholder="e.g. QCF-DIM-001"
+                  style={{ width: '100%', padding: '8px', border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-sm)', fontSize: 13, outline: 'none' }} />
+              </label>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button onClick={() => setReportModal(null)} style={bSec}>Cancel</button>
+                <button onClick={batchSetReport} disabled={!reportValue || savingId === 'batch'} style={bPri}>
+                  {savingId === 'batch' ? 'Applying...' : `Apply to ${selectedIds.size}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Toast */}
         {toast && (
           <div style={{

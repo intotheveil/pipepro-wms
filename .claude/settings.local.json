@@ -7,7 +7,14 @@
       "Bash(mkdir -p src/components src/pages src/lib src/styles)",
       "Bash(npx vite *)",
       "Bash(npm run *)",
-      "Bash(clip)"
+      "Bash(clip)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(node *)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(curl *)",
+      "Bash(taskkill //F //IM node.exe)"
     ]
   }
 }
