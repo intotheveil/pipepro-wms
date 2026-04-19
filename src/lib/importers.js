@@ -116,6 +116,14 @@ function cellVal(row, idx) {
   return row[idx];
 }
 
+function extractEntryStatus(row, headers) {
+  const val = str(cellVal(row, findColumn(headers, 'ENTRY_STATUS', 'ENTRY STATUS')));
+  if (!val) return null;
+  const upper = val.toUpperCase();
+  if (upper === 'DEL' || upper === 'DELETE') return 'DELETE';
+  return upper; // unknown value — caller will warn and skip
+}
+
 // -- Importer: ISO REGISTER ---------------------------------------------------
 
 const isoRegisterImporter = {
@@ -123,6 +131,7 @@ const isoRegisterImporter = {
   label: 'ISO Register',
   table: 'iso_register',
   headerRow: 1,
+  deleteKey: 'fast_no',
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -133,9 +142,10 @@ const isoRegisterImporter = {
     const col = (...names) => cellVal(row, findColumn(headers, ...names));
 
     const drawingNo = str(col('ISO DRAWING', 'DRAWING'));
-    if (!drawingNo) return null; // skip blank rows
+    if (!drawingNo) return null;
 
     return {
+      _entry_status: extractEntryStatus(row, headers),
       project_id: projectId,
       fast_no: str(col('FAST NUMBER', 'FAST NO', 'FAST')),
       drawing_no: drawingNo,
@@ -162,6 +172,7 @@ const welderRegisterImporter = {
   label: 'Welder Register',
   table: 'welders',
   headerRow: 1,
+  deleteKey: 'stamp',
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -173,9 +184,10 @@ const welderRegisterImporter = {
 
     const name = str(col('FULL NAME', 'NAME'));
     const stamp = str(col('WELDER ID / STAMP', 'WELDER ID', 'STAMP'));
-    if (!name && !stamp) return null; // skip blank rows
+    if (!name && !stamp) return null;
 
     return {
+      _entry_status: extractEntryStatus(row, headers),
       project_id: projectId,
       stamp: stamp,
       name: name || stamp, // fallback to stamp if no name
@@ -201,6 +213,7 @@ const documentControlImporter = {
   label: 'Document Control Register',
   table: 'documents',
   headerRow: 4,
+  deleteKey: 'doc_no',
 
   detect(sheetName) {
     const n = sheetName.toUpperCase().trim();
@@ -212,9 +225,10 @@ const documentControlImporter = {
 
     const docNo = str(col('DOCUMENT ID', 'DOC ID'));
     const docTitle = str(col('DOCUMENT TITLE'));
-    if (!docNo && !docTitle) return null; // skip blank rows
+    if (!docNo && !docTitle) return null;
 
     return {
+      _entry_status: extractEntryStatus(row, headers),
       project_id: projectId,
       doc_no: docNo,
       serial_number: parseInt2(col('SERIAL NUMBER', 'SERIAL NO', 'S/N')),
@@ -252,6 +266,7 @@ const wpsRegisterImporter = {
   label: 'WPS Register',
   table: 'wps_list',
   headerRow: 1,
+  deleteKey: 'wps_no',
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -278,6 +293,7 @@ const wpsRegisterImporter = {
     const qualPositions = str(col('QUALIFICATION POSITIONS', 'POSITION'));
 
     return {
+      _entry_status: extractEntryStatus(row, headers),
       project_id: projectId,
       wps_no: wpsNo,
       serial_no: parseInt2(col('S/N', 'SERIAL NUMBER', 'SERIAL NO')),
@@ -318,7 +334,8 @@ const spoolDmpImporter = {
   id: 'spools',
   label: 'Spool DMP',
   table: 'spools',
-  headerRow: 2, // 3-row header, data starts after row index 2
+  headerRow: 2,
+  deleteKey: 'spool_no',
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -337,6 +354,7 @@ const spoolDmpImporter = {
       : null;
 
     return {
+      _entry_status: extractEntryStatus(row, headers),
       project_id: projectId,
       spool_no: spoolNo,
       _rawFastNo: str(col('FN', 'FAST NO', 'FAST No', 'FAST No.', 'FAST_NO', 'FAST NUMBER', 'FAST')),
@@ -402,6 +420,7 @@ const weldLogImporter = {
   label: 'Weld Log',
   table: 'weld_log',
   headerRow: 1,
+  deleteKey: 'weld_id',
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -466,6 +485,7 @@ const weldLogImporter = {
     const notes = noteParts.join(' | ') || null;
 
     return {
+      _entry_status: extractEntryStatus(row, headers),
       project_id: projectId,
       weld_id: weldId,
       _rawFastNo: str(col('FN', 'FAST NO', 'FAST No', 'FAST No.', 'FAST_NO', 'FAST NUMBER', 'FAST')),
@@ -540,6 +560,7 @@ const supportsListImporter = {
   label: 'Supports List',
   table: 'supports_list',
   headerRow: 1,
+  deleteKey: 'support_mark',
 
   detect(sheetName) {
     const n = sheetName.toUpperCase().trim();
@@ -573,6 +594,7 @@ const supportsListImporter = {
     const notes = [welderText, notesText].filter(Boolean).join(' | ') || null;
 
     return {
+      _entry_status: extractEntryStatus(row, headers),
       project_id: projectId,
       support_mark: supportMark,
       eidos: str(col('EIDOS STIRIGMATOS', 'EIDOS', 'TYPE EIDOS')),
@@ -597,6 +619,7 @@ const testpackRegisterImporter = {
   label: 'Testpack Register',
   table: 'testpacks',
   headerRow: 1,
+  deleteKey: 'testpack_no',
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -625,6 +648,7 @@ const testpackRegisterImporter = {
     const status = VALID_STATUSES.includes(rawStatus) ? rawStatus : 'draft';
 
     return {
+      _entry_status: extractEntryStatus(row, headers),
       project_id: projectId,
       testpack_no: testpackNo,
       system: str(col('SYSTEM')),
@@ -757,9 +781,13 @@ export async function importMaterialsBOM(file, projectId) {
   for (const r of isoData) isoMap[String(r.fast_no)] = r.id;
 
   const mapped = [];
+  const bomToDelete = [];
   const unmatchedFns = new Set();
   let catCoded = 0;
   let catMissing = 0;
+
+  // Pre-compute header index for Entry_Status
+  const esHeaders = rawRows[1];
 
   for (const row of realRows) {
     const pos = col(row, 'POS', 'POSITION');
@@ -769,6 +797,16 @@ export async function importMaterialsBOM(file, projectId) {
     const fnRaw = str(col(row, 'FN', 'FAST NO', 'FAST No', 'FAST No.', 'FAST_NO', 'FAST NUMBER', 'FAST'));
     const isoId = isoMap[fnRaw] || null;
     if (!isoId && fnRaw) unmatchedFns.add(fnRaw);
+
+    // Check Entry_Status
+    const entryStatus = extractEntryStatus(row, esHeaders);
+    if (entryStatus === 'DELETE') {
+      bomToDelete.push({ project_id: projectId, iso_id: isoId, pos: posNum, revision: str(col(row, 'REVISION', 'REV')) || 'R0' });
+      continue;
+    } else if (entryStatus) {
+      console.warn(`[importMaterialsBOM] unknown Entry_Status "${entryStatus}" at pos ${posNum}, skipping`);
+      continue;
+    }
 
     const rev = str(col(row, 'REVISION', 'REV')) || 'R0';
     const desc = str(col(row, 'DESCRIPTION', 'DESC'));
@@ -833,6 +871,16 @@ export async function importMaterialsBOM(file, projectId) {
       .neq('revision', revision);
   }
 
+  // Delete rows marked for deletion
+  let bomDeleted = 0;
+  const bomDeletedSamples = [];
+  for (const d of bomToDelete) {
+    if (!d.iso_id) continue;
+    const { error } = await sb.from('materials_bom').delete()
+      .eq('project_id', projectId).eq('iso_id', d.iso_id).eq('pos', d.pos).eq('revision', d.revision);
+    if (!error) { bomDeleted++; if (bomDeletedSamples.length < 10) bomDeletedSamples.push(`FN${d.iso_id}:pos${d.pos}`); }
+  }
+
   // Upsert in batches
   let inserted = 0;
   for (let i = 0; i < deduped.length; i += MAT_BATCH) {
@@ -856,6 +904,8 @@ export async function importMaterialsBOM(file, projectId) {
     total_rows: realRows.length,
     deduped_count: deduped.length,
     inserted,
+    deleted: bomDeleted,
+    deleted_samples: bomDeletedSamples,
     unmatched_fn_count: unmatchedFns.size,
     unmatched_fns: [...unmatchedFns].slice(0, 20),
     category_code_coded: catCoded,
@@ -908,9 +958,21 @@ export async function importMaterialsCatalogue(file, projectId) {
   const SYSTEM_TOKEN_RE = /^APP-\d+-([A-Z0-9_]+)-/;
   let catCoded = 0;
   let catMissing = 0;
+  const catToDelete = [];
+  const catHeaders = rawRows[1];
 
   for (const row of realRows) {
     const partNo = str(col(row, 'PART NO#', 'PART NO'));
+
+    // Check Entry_Status
+    const entryStatus = extractEntryStatus(row, catHeaders);
+    if (entryStatus === 'DELETE') {
+      catToDelete.push(partNo);
+      continue;
+    } else if (entryStatus) {
+      console.warn(`[importMaterialsCatalogue] unknown Entry_Status "${entryStatus}" for part ${partNo}, skipping`);
+      continue;
+    }
 
     const longCode = str(col(row, 'LONG CODE')) || null;
     let systemToken = null;
@@ -988,8 +1050,17 @@ export async function importMaterialsCatalogue(file, projectId) {
   console.info(`[importMaterialsCatalogue] dedup: ${mapped.length} mapped rows → ${deduped.length} unique part_no (quantities aggregated)`);
 
   const sb = getSupabase();
-  let inserted = 0;
 
+  // Delete rows marked for deletion
+  let catDeleted = 0;
+  const catDeletedSamples = [];
+  for (const partNo of catToDelete) {
+    const { error } = await sb.from('materials_catalogue').delete()
+      .eq('project_id', projectId).eq('part_no', partNo);
+    if (!error) { catDeleted++; if (catDeletedSamples.length < 10) catDeletedSamples.push(partNo); }
+  }
+
+  let inserted = 0;
   for (let i = 0; i < deduped.length; i += MAT_BATCH) {
     const batch = deduped.slice(i, i + MAT_BATCH);
     const { data, error } = await sb.from('materials_catalogue')
@@ -1007,6 +1078,8 @@ export async function importMaterialsCatalogue(file, projectId) {
     total_rows: realRows.length,
     deduped_count: deduped.length,
     inserted,
+    deleted: catDeleted,
+    deleted_samples: catDeletedSamples,
     updated: 0,
     category_code_coded: catCoded,
     category_code_missing: catMissing,
@@ -1083,7 +1156,13 @@ export async function importMaterialsDelivery(file, projectId, headerInfo) {
   const mapped = [];
   const unmatchedCodes = new Set();
 
+  let deliverySkippedDel = 0;
   for (const row of realRows) {
+    // Check Entry_Status — DELETE rows are simply excluded (the whole delivery is re-inserted fresh)
+    const entryStatus = extractEntryStatus(row, headers);
+    if (entryStatus === 'DELETE') { deliverySkippedDel++; continue; }
+    else if (entryStatus) { console.warn(`[importMaterialsDelivery] unknown Entry_Status "${entryStatus}", skipping`); continue; }
+
     const itemCode = str(col(row, 'ITEM CODE'));
     const desc = str(col(row, 'ENGLISH DESCRIPTION', 'DESCRIPTION'));
 
@@ -1132,6 +1211,7 @@ export async function importMaterialsDelivery(file, projectId, headerInfo) {
     delivery_id: deliveryId,
     total_rows: mapped.length,
     inserted,
+    deleted: deliverySkippedDel,
     unmatched_item_codes: [...unmatchedCodes].slice(0, 20),
   };
 }
@@ -1156,21 +1236,34 @@ export function detectImporter(sheetName) {
 
 export function parseSheet(rawRows, importer, projectId) {
   const headerIdx = importer.headerRow;
-  if (headerIdx >= rawRows.length) return { headers: [], mapped: [], errors: [] };
+  if (headerIdx >= rawRows.length) return { headers: [], mapped: [], toDelete: [], errors: [], skippedEntryStatus: 0 };
 
   const headers = rawRows[headerIdx];
   const dataRows = rawRows.slice(headerIdx + 1);
   const mapped = [];
+  const toDelete = [];
   const errors = [];
+  let skippedEntryStatus = 0;
 
   dataRows.forEach((row, i) => {
     try {
       const record = importer.mapRow(row, headers, projectId);
-      if (record) mapped.push(record);
+      if (!record) return;
+      const status = record._entry_status;
+      delete record._entry_status;
+      if (status === 'DELETE') {
+        toDelete.push(record);
+      } else if (status) {
+        // Unknown entry_status value — skip row
+        skippedEntryStatus++;
+        console.warn(`[parseSheet/${importer.id}] unknown Entry_Status "${status}" at row ${headerIdx + 1 + i + 1}, skipping`);
+      } else {
+        mapped.push(record);
+      }
     } catch (err) {
       errors.push({ row: headerIdx + 1 + i + 1, message: err.message });
     }
   });
 
-  return { headers, mapped, errors };
+  return { headers, mapped, toDelete, errors, skippedEntryStatus };
 }

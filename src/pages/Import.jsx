@@ -79,16 +79,41 @@ export default function Import() {
     if (!preview) return;
 
     setStep(STEPS.IMPORTING);
-    const { mapped, importer } = preview;
-    const total = mapped.length;
+    const { mapped, toDelete = [], importer } = preview;
+    const total = mapped.length + toDelete.length;
     const errors = [];
     let done = 0;
+    let deletedCount = 0;
+    const deletedSamples = [];
 
     setProgress({ done: 0, total, errors: [] });
 
     const supabase = getSupabase();
 
-    // Resolve foreign keys (iso_id, spool_id, etc.) before inserting
+    // Phase 1: Delete rows marked with Entry_Status = DELETE
+    if (toDelete.length > 0 && importer.deleteKey) {
+      for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+        const batch = toDelete.slice(i, i + BATCH_SIZE);
+        for (const row of batch) {
+          const keyVal = row[importer.deleteKey];
+          if (!keyVal) continue;
+          const { error } = await supabase.from(importer.table)
+            .delete()
+            .eq('project_id', row.project_id)
+            .eq(importer.deleteKey, keyVal);
+          if (error) {
+            errors.push({ batch: 'del', message: `Delete ${keyVal}: ${error.message}`, rows: keyVal });
+          } else {
+            deletedCount++;
+            if (deletedSamples.length < 10) deletedSamples.push(keyVal);
+          }
+        }
+        done = Math.min(i + BATCH_SIZE, toDelete.length);
+        setProgress({ done, total, errors: [...errors] });
+      }
+    }
+
+    // Phase 2: Resolve foreign keys
     if (importer.resolveFK) {
       try {
         await importer.resolveFK(mapped, project.id, supabase);
@@ -97,7 +122,9 @@ export default function Import() {
       }
     }
 
-    for (let i = 0; i < total; i += BATCH_SIZE) {
+    // Phase 3: Upsert/insert rows
+    const upsertBase = toDelete.length;
+    for (let i = 0; i < mapped.length; i += BATCH_SIZE) {
       const batch = mapped.slice(i, i + BATCH_SIZE);
       const { error } = importer.onConflict
         ? await supabase.from(importer.table).upsert(batch, { onConflict: importer.onConflict })
@@ -107,11 +134,11 @@ export default function Import() {
         errors.push({
           batch: Math.floor(i / BATCH_SIZE) + 1,
           message: error.message,
-          rows: `${i + 1}–${Math.min(i + BATCH_SIZE, total)}`,
+          rows: `${i + 1}\u2013${Math.min(i + BATCH_SIZE, mapped.length)}`,
         });
       }
 
-      done = Math.min(i + BATCH_SIZE, total);
+      done = upsertBase + Math.min(i + BATCH_SIZE, mapped.length);
       setProgress({ done, total, errors: [...errors] });
     }
 
@@ -274,7 +301,12 @@ export default function Import() {
                 {preview.importer.label}
               </p>
               <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
-                {preview.mapped.length} rows ready to import
+                {preview.mapped.length} rows to upsert
+                {(preview.toDelete?.length > 0) && (
+                  <span style={{ color: '#ef4444', marginLeft: 8 }}>
+                    {preview.toDelete.length} to delete
+                  </span>
+                )}
                 {preview.errors.length > 0 && (
                   <span style={{ color: 'var(--color-warning)', marginLeft: 8 }}>
                     {preview.errors.length} parse errors
@@ -293,7 +325,7 @@ export default function Import() {
                   cursor: preview.mapped.length === 0 ? 'not-allowed' : 'pointer',
                 }}
               >
-                Import {preview.mapped.length} rows
+                Import {preview.mapped.length + (preview.toDelete?.length || 0)} rows
               </button>
             </div>
           </div>
