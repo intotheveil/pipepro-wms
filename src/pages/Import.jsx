@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { read, utils } from 'xlsx';
 import { useProject } from '../lib/project.jsx';
 import { getSupabase } from '../lib/supabase';
-import { IMPORTERS, detectImporter, parseSheet, importMaterialsBOM, importMaterialsCatalogue, importMaterialsDelivery } from '../lib/importers';
+import { IMPORTERS, detectImporter, parseSheet, importMaterialsBOM, importMaterialsCatalogue, importMaterialsDelivery, matchBomToCatalogue } from '../lib/importers';
 
 const BATCH_SIZE = 200;
 
@@ -470,6 +470,29 @@ export default function Import() {
               {matStatus?.type === 'delivery' && matStatus.running ? 'Importing...' : 'Enter Details'}
             </button>
           </div>
+        </div>
+
+        {/* Re-run matcher */}
+        <div style={{ marginBottom: 'var(--space-md)' }}>
+          <button
+            onClick={async () => {
+              setMatStatus({ type: 'matcher', running: true, result: null, error: null });
+              try {
+                const result = await matchBomToCatalogue(project.id);
+                setMatStatus({ type: 'matcher', running: false, result, error: null });
+              } catch (err) {
+                console.error('[Import/Matcher]', err);
+                setMatStatus({ type: 'matcher', running: false, result: null, error: err.message });
+              }
+            }}
+            disabled={matStatus?.type === 'matcher' && matStatus.running}
+            style={btnSecondary}
+          >
+            {matStatus?.type === 'matcher' && matStatus.running ? 'Running...' : 'Re-run Catalogue Matcher'}
+          </button>
+          <span style={{ fontSize: 12, color: 'var(--color-text-muted)', marginLeft: 'var(--space-sm)' }}>
+            Re-link BOM rows to catalogue entries after correcting data.
+          </span>
         </div>
 
         {/* Materials import result */}

@@ -8,6 +8,10 @@
 import { read, utils } from 'xlsx';
 import { getSupabase } from './supabase';
 import { fetchAll } from './fetchAll';
+import { normalizeND, normalizeCode } from './materials/normalize.js';
+import { inferCategoryCode, VALID_CATEGORY_CODES } from './materials/classify.js';
+import { matchBomToCatalogue } from './materials/matcher.js';
+export { matchBomToCatalogue };
 
 // -- Parsing helpers ----------------------------------------------------------
 
@@ -726,6 +730,9 @@ export async function importMaterialsBOM(file, projectId) {
 
   const mapped = [];
   const unmatchedFns = new Set();
+  let catFromExcel = 0;
+  let catFromClassifier = 0;
+  let catUnknown = 0;
 
   for (const row of realRows) {
     const pos = col(row, 'POS', 'POSITION');
@@ -739,6 +746,22 @@ export async function importMaterialsBOM(file, projectId) {
     const rev = str(col(row, 'REVISION', 'REV')) || 'R0';
     const desc = str(col(row, 'DESCRIPTION', 'DESC'));
     const { qty_raw, qty_num, qty_unit } = parseQty(col(row, 'QTY', 'QUANTITY'));
+
+    // Category code: prefer Excel column, fall back to classifier
+    const rawCatCode = normalizeCode(col(row, 'CATEGORY CODE', 'CAT CODE', 'CAT_CODE', 'CATEGORY'));
+    let category_code = null;
+    if (rawCatCode && VALID_CATEGORY_CODES.has(rawCatCode)) {
+      category_code = rawCatCode;
+      catFromExcel++;
+    } else if (rawCatCode) {
+      catUnknown++;
+      console.warn(`[importMaterialsBOM] unknown category code "${rawCatCode}" at pos ${posNum}, falling back to classifier`);
+      category_code = inferCategoryCode(desc);
+      catFromClassifier++;
+    } else {
+      category_code = inferCategoryCode(desc);
+      catFromClassifier++;
+    }
 
     mapped.push({
       project_id: projectId,
@@ -755,6 +778,7 @@ export async function importMaterialsBOM(file, projectId) {
       system: str(col(row, 'SYSTEM')) || null,
       system_code: str(col(row, 'SYSTEM CODE', 'SYSTEM_CODE')) || null,
       sheet: str(col(row, 'SHEET', 'SHEET NO')) || null,
+      category_code,
       imported_at: new Date().toISOString(),
       imported_from: file.name,
     });
@@ -800,12 +824,20 @@ export async function importMaterialsBOM(file, projectId) {
     console.warn(`[importMaterialsBOM] ${unmatchedFns.size} FN values did not match any ISO`);
   }
 
+  // Run matcher after import
+  const matcher = await matchBomToCatalogue(projectId);
+  console.info(`[importMaterialsBOM] done: ${deduped.length} rows, matcher linked ${matcher.matched} to catalogue`);
+
   return {
     total_rows: realRows.length,
     deduped_count: deduped.length,
     inserted,
     unmatched_fn_count: unmatchedFns.size,
     unmatched_fns: [...unmatchedFns].slice(0, 20),
+    category_code_from_excel: catFromExcel,
+    category_code_from_classifier: catFromClassifier,
+    category_code_unknown: catUnknown,
+    matcher,
   };
 }
 
@@ -870,13 +902,15 @@ export async function importMaterialsCatalogue(file, projectId) {
       }
     }
 
+    const desc = str(col(row, 'PRODUCT', 'DESCRIPTION')) || null;
     mapped.push({
       project_id: projectId,
       part_no: partNo,
-      description: str(col(row, 'PRODUCT', 'DESCRIPTION')) || null,
+      description: desc,
       spec: str(col(row, 'SPEC')) || null,
       nd: str(col(row, 'ND')) || null,
       category: str(col(row, 'CAT')) || null,
+      category_code: inferCategoryCode(desc),
       qty_ordered: parseNum(col(row, 'QTY (FOR PROCUREMENT)', 'QTY')),
       qty_received_mto: parseNum(col(row, 'RECEIVED')),
       unit_of_measure: str(col(row, 'UOM')) || null,
@@ -926,11 +960,16 @@ export async function importMaterialsCatalogue(file, projectId) {
     else if (data) inserted += data.length;
   }
 
+  // Run matcher after import
+  const matcher = await matchBomToCatalogue(projectId);
+  console.info(`[importMaterialsCatalogue] done: ${deduped.length} rows, matcher linked ${matcher.matched} to catalogue`);
+
   return {
     total_rows: realRows.length,
     deduped_count: deduped.length,
     inserted,
     updated: 0,
+    matcher,
   };
 }
 
