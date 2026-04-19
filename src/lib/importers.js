@@ -9,7 +9,7 @@ import { read, utils } from 'xlsx';
 import { getSupabase } from './supabase';
 import { fetchAll } from './fetchAll';
 import { normalizeND, normalizeCode } from './materials/normalize.js';
-import { inferCategoryCode, VALID_CATEGORY_CODES } from './materials/classify.js';
+import { VALID_CATEGORY_CODES } from './materials/classify.js';
 import { matchBomToCatalogue } from './materials/matcher.js';
 export { matchBomToCatalogue };
 
@@ -730,9 +730,8 @@ export async function importMaterialsBOM(file, projectId) {
 
   const mapped = [];
   const unmatchedFns = new Set();
-  let catFromExcel = 0;
-  let catFromClassifier = 0;
-  let catUnknown = 0;
+  let catCoded = 0;
+  let catMissing = 0;
 
   for (const row of realRows) {
     const pos = col(row, 'POS', 'POSITION');
@@ -747,20 +746,17 @@ export async function importMaterialsBOM(file, projectId) {
     const desc = str(col(row, 'DESCRIPTION', 'DESC'));
     const { qty_raw, qty_num, qty_unit } = parseQty(col(row, 'QTY', 'QUANTITY'));
 
-    // Category code: prefer Excel column, fall back to classifier
+    // Category code: Excel column only, no classifier fallback
     const rawCatCode = normalizeCode(col(row, 'CATEGORY CODE', 'CAT CODE', 'CAT_CODE', 'CATEGORY'));
     let category_code = null;
     if (rawCatCode && VALID_CATEGORY_CODES.has(rawCatCode)) {
       category_code = rawCatCode;
-      catFromExcel++;
+      catCoded++;
     } else if (rawCatCode) {
-      catUnknown++;
-      console.warn(`[importMaterialsBOM] unknown category code "${rawCatCode}" at pos ${posNum}, falling back to classifier`);
-      category_code = inferCategoryCode(desc);
-      catFromClassifier++;
+      console.warn(`[importMaterialsBOM] unknown category code "${rawCatCode}" at pos ${posNum}, leaving NULL`);
+      catMissing++;
     } else {
-      category_code = inferCategoryCode(desc);
-      catFromClassifier++;
+      catMissing++;
     }
 
     mapped.push({
@@ -834,9 +830,8 @@ export async function importMaterialsBOM(file, projectId) {
     inserted,
     unmatched_fn_count: unmatchedFns.size,
     unmatched_fns: [...unmatchedFns].slice(0, 20),
-    category_code_from_excel: catFromExcel,
-    category_code_from_classifier: catFromClassifier,
-    category_code_unknown: catUnknown,
+    category_code_coded: catCoded,
+    category_code_missing: catMissing,
     matcher,
   };
 }
@@ -883,6 +878,8 @@ export async function importMaterialsCatalogue(file, projectId) {
 
   const mapped = [];
   const SYSTEM_TOKEN_RE = /^APP-\d+-([A-Z0-9_]+)-/;
+  let catCoded = 0;
+  let catMissing = 0;
 
   for (const row of realRows) {
     const partNo = str(col(row, 'PART NO#', 'PART NO'));
@@ -903,6 +900,20 @@ export async function importMaterialsCatalogue(file, projectId) {
     }
 
     const desc = str(col(row, 'PRODUCT', 'DESCRIPTION')) || null;
+
+    // Category code: Excel column only, no classifier fallback
+    const rawCatCode = normalizeCode(col(row, 'CATEGORY CODE', 'CAT CODE', 'CAT_CODE', 'CATEGORY'));
+    let catCode = null;
+    if (rawCatCode && VALID_CATEGORY_CODES.has(rawCatCode)) {
+      catCode = rawCatCode;
+      catCoded++;
+    } else if (rawCatCode) {
+      console.warn(`[importMaterialsCatalogue] unknown category code "${rawCatCode}" for part ${partNo}, leaving NULL`);
+      catMissing++;
+    } else {
+      catMissing++;
+    }
+
     mapped.push({
       project_id: projectId,
       part_no: partNo,
@@ -910,7 +921,7 @@ export async function importMaterialsCatalogue(file, projectId) {
       spec: str(col(row, 'SPEC')) || null,
       nd: str(col(row, 'ND')) || null,
       category: str(col(row, 'CAT')) || null,
-      category_code: inferCategoryCode(desc),
+      category_code: catCode,
       qty_ordered: parseNum(col(row, 'QTY (FOR PROCUREMENT)', 'QTY')),
       qty_received_mto: parseNum(col(row, 'RECEIVED')),
       unit_of_measure: str(col(row, 'UOM')) || null,
@@ -969,6 +980,8 @@ export async function importMaterialsCatalogue(file, projectId) {
     deduped_count: deduped.length,
     inserted,
     updated: 0,
+    category_code_coded: catCoded,
+    category_code_missing: catMissing,
     matcher,
   };
 }
