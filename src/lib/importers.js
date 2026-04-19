@@ -124,6 +124,61 @@ function extractEntryStatus(row, headers) {
   return upper; // unknown value — caller will warn and skip
 }
 
+// -- Header validation + partial-safe sanitization ----------------------------
+
+/**
+ * Validate file headers against an importer's columnMap.
+ * Returns { valid, missing[], unknown[], absentFields: Set }
+ */
+export function validateImportHeaders(rawHeaders, importer) {
+  if (!importer.columnMap) return { valid: true, missing: [], unknown: [], absentFields: new Set() };
+
+  const headers = rawHeaders.map(normalizeHeader);
+  const missing = [];
+  const absentFields = new Set();
+  const claimedIndices = new Set();
+
+  // Check each declared field
+  for (const [field, aliases] of Object.entries(importer.columnMap)) {
+    const idx = findColumn(rawHeaders, ...aliases);
+    if (idx >= 0) {
+      claimedIndices.add(idx);
+    } else {
+      absentFields.add(field);
+      if (importer.requiredFields?.includes(field)) {
+        missing.push(aliases[0]); // report primary alias
+      }
+    }
+  }
+
+  // Also claim Entry_Status column
+  const esIdx = findColumn(rawHeaders, 'ENTRY_STATUS', 'ENTRY STATUS');
+  if (esIdx >= 0) claimedIndices.add(esIdx);
+
+  // Unknown = file columns not claimed by any field
+  const unknown = [];
+  for (let i = 0; i < rawHeaders.length; i++) {
+    const h = str(rawHeaders[i]);
+    if (h && !claimedIndices.has(i)) unknown.push(h);
+  }
+
+  return { valid: missing.length === 0, missing, unknown, absentFields };
+}
+
+/**
+ * Strip absent fields from a mapped record so partial uploads
+ * don't overwrite untouched DB columns with null.
+ */
+function sanitizeRecord(record, absentFields) {
+  if (absentFields.size === 0) return record;
+  const clean = {};
+  for (const [k, v] of Object.entries(record)) {
+    // Preserve internal markers (prefixed with _) and fields not absent
+    if (k.startsWith('_') || !absentFields.has(k)) clean[k] = v;
+  }
+  return clean;
+}
+
 // -- Importer: ISO REGISTER ---------------------------------------------------
 
 const isoRegisterImporter = {
@@ -132,6 +187,21 @@ const isoRegisterImporter = {
   table: 'iso_register',
   headerRow: 1,
   deleteKey: 'fast_no',
+  requiredFields: ['fast_no', 'drawing_no'],
+  columnMap: {
+    fast_no: ['FAST NUMBER', 'FAST NO', 'FAST'],
+    drawing_no: ['ISO DRAWING', 'DRAWING'],
+    material: ['MATERIAL'],
+    sheet: ['SHEET NO', 'SHEET'],
+    revision: ['REV', 'REVISION'],
+    fluid_code: ['FLUID CODE', 'FLUID'],
+    system: ['SERVICE', 'SYSTEM'],
+    piping_class: ['PIPING CLASS', 'CLASS'],
+    size_nps: ['SIZE (NPS)', 'SIZE', 'NPS'],
+    ped_category: ['PED', 'PED CATEGORY'],
+    status: ['STATUS'],
+    notes: ['NOTES', 'REMARKS'],
+  },
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -173,6 +243,14 @@ const welderRegisterImporter = {
   table: 'welders',
   headerRow: 1,
   deleteKey: 'stamp',
+  requiredFields: ['stamp'],
+  columnMap: {
+    stamp: ['WELDER ID / STAMP', 'WELDER ID', 'STAMP'],
+    name: ['FULL NAME', 'NAME'],
+    qualified_wps: ['WPS / PROCESS QUAL.', 'WPS', 'PROCESS QUAL'],
+    qualification_exp: ['EXPIRY DATE', 'EXPIRY', 'EXP DATE'],
+    active: ['STATUS'],
+  },
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -214,6 +292,29 @@ const documentControlImporter = {
   table: 'documents',
   headerRow: 4,
   deleteKey: 'doc_no',
+  requiredFields: ['doc_no'],
+  columnMap: {
+    doc_no: ['DOCUMENT ID', 'DOC ID'],
+    serial_number: ['SERIAL NUMBER', 'SERIAL NO', 'S/N'],
+    notes: ['PROJECT DOC ID', 'PROJECT DOCUMENT ID'],
+    title: ['DOCUMENT TITLE'],
+    file_type: ['DOCUMENT CATEGORY', 'CATEGORY'],
+    document_purpose: ['DOCUMENT PURPOSE', 'PURPOSE'],
+    revision: ['REVISION', 'REV'],
+    internal_project_id: ['INTERNAL/ PROJECT ID', 'INTERNAL/PROJECT ID', 'PROJECT ID', 'INTERNAL'],
+    uploaded_at: ['ISSUE DATE'],
+    revision_date: ['REVISION DATE', 'REV DATE'],
+    discipline: ['DISCIPLINE'],
+    discipline_code: ['D. CODE', 'D.CODE', 'DISCIPLINE CODE'],
+    owner_name: ['OWNER'],
+    approved_by: ['APPROVED BY'],
+    revision_status: ['REVISION STATUS', 'REV STATUS'],
+    transmittal_in: ['TRANSMITTAL IN'],
+    transmittal_in_date: ['TRANSMITTAL IN DATE'],
+    transmittal_out: ['TRANSMITTAL OUT'],
+    transmittal_out_date: ['TRANSMITTAL OUT DATE'],
+    file_url: ['FILE LOCATION', 'FILE PATH', 'FILE URL'],
+  },
 
   detect(sheetName) {
     const n = sheetName.toUpperCase().trim();
@@ -267,6 +368,33 @@ const wpsRegisterImporter = {
   table: 'wps_list',
   headerRow: 1,
   deleteKey: 'wps_no',
+  requiredFields: ['wps_no'],
+  columnMap: {
+    wps_no: ['WPS No', 'WPS REF.', 'WPS REF', 'WPS NO', 'WPS No.', 'WPS'],
+    serial_no: ['S/N', 'SERIAL NUMBER', 'SERIAL NO'],
+    revision: ['REVISION', 'REV'],
+    wps_standard: ['WPS STANDARD', 'WPS Standard'],
+    pqr_wpar: ['PQR / WPAR', 'PQR/WPAR'],
+    pqr_wpar_standard: ['PQR / WPAR STANDARD', 'PQR STANDARD'],
+    welding_processes: ['WELDING PROCESSES', 'PROCESS'],
+    joints: ['JOINTS'],
+    parent_material_1: ['PARENT MATERIALS NO1', 'PARENT MATERIAL 1'],
+    parent_material_pno_gno: ['PARENT MATERIALS P NO/ G NO', 'P NO / G NO'],
+    p_numbers: ['BASE MATERIAL GROUP', 'BASE MATERIAL', 'P NUMBERS', 'P-NUMBERS'],
+    filler_material: ['FILLER MATERIAL NO1', 'FILLER MATERIAL'],
+    f_number: ['F NUMBER', 'F NO'],
+    a_number: ['A NUMBER', 'A NO'],
+    thickness_range_mm: ['THICKNESS RANGE (MM)', 'THICKNESS RANGE', 'THICKNESS'],
+    max_thickness_deposit: ['MAXIMUM THICKNESS DEPOSIT PER PROCESS RANGE', 'MAX THICKNESS DEPOSIT'],
+    od_range_mm: ['OD RANGE (MM)', 'OD RANGE'],
+    qualification_positions: ['QUALIFICATION POSITIONS', 'POSITION'],
+    preheat: ['PREHEAT'],
+    post_heat: ['POST HEAT'],
+    pwht: ['PWHT'],
+    interpass_temp: ['INTERPASS T\u00B0', 'INTERPASS TEMP'],
+    qualified_date: ['DATE', 'QUALIFIED DATE'],
+    remarks: ['REMARKS'],
+  },
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -336,6 +464,29 @@ const spoolDmpImporter = {
   table: 'spools',
   headerRow: 2,
   deleteKey: 'spool_no',
+  requiredFields: ['spool_no', '_rawFastNo'],
+  columnMap: {
+    spool_no: ['SPOOL NO', 'SPOOL', 'SPOOL NUMBER', 'SPOOL ID'],
+    _rawFastNo: ['FN', 'FAST NO', 'FAST No', 'FAST No.', 'FAST_NO', 'FAST NUMBER', 'FAST'],
+    shop_field: ['SHOP/FIELD', 'SHOP / FIELD', 'SHOP_FIELD', 'TYPE'],
+    material_checked: ['MATERIAL CHECKED', 'MAT CHECK', 'MAT CHECKED'],
+    material_check_date: ['MATERIAL CHECK DATE', 'MAT CHECK DATE'],
+    fab_started: ['FAB STARTED', 'FAB START'],
+    fab_start_date: ['FAB START DATE'],
+    fabricated: ['FABRICATED', 'FAB COMPLETE'],
+    fabricated_date: ['FABRICATED DATE', 'FAB COMPLETE DATE', 'FAB DATE'],
+    qc_released: ['QC RELEASED', 'QC RELEASE', 'QC'],
+    qc_release_date: ['QC RELEASE DATE', 'QC DATE'],
+    sent_to_paint: ['SENT TO PAINT'],
+    sent_to_paint_date: ['SENT TO PAINT DATE', 'PAINT SENT DATE'],
+    painted: ['PAINTED', 'PAINT COMPLETE'],
+    painted_date: ['PAINTED DATE', 'PAINT DATE'],
+    at_laydown: ['AT LAYDOWN', 'LAYDOWN'],
+    laydown_date: ['LAYDOWN DATE'],
+    erected: ['ERECTED', 'ERECTION'],
+    erected_date: ['ERECTED DATE', 'ERECTION DATE'],
+    notes: ['NOTES', 'REMARKS'],
+  },
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -421,6 +572,24 @@ const weldLogImporter = {
   table: 'weld_log',
   headerRow: 1,
   deleteKey: 'weld_id',
+  requiredFields: ['weld_id', '_rawFastNo'],
+  columnMap: {
+    weld_id: ['FN_WELD', 'FN WELD', 'WELD ID', 'WELD NO'],
+    _rawFastNo: ['FN', 'FAST NO', 'FAST No', 'FAST No.', 'FAST_NO', 'FAST NUMBER', 'FAST'],
+    _rawSpoolNo: ['SPOOL ID', 'SPOOL', 'SPOOL NO'],
+    joint_type: ['JOINT TYPE', 'WELD TYPE'],
+    shop_field: ['SHOP / FIELD', 'SHOP/FIELD', 'SHOP_FIELD'],
+    dia_inch: ['WELD INCHES', 'DIA (INCH)', 'DIA', 'DIAMETER'],
+    thickness: ['THICKNESS/ SCHEDULE', 'THICKNESS', 'THK', 'WALL'],
+    fit_up_date: ['FIT-UP DATE', 'FIT UP DATE', 'FITUP DATE'],
+    weld_date: ['WELDING DATE', 'WELD DATE', 'WELDED DATE'],
+    welded: ['WELDED', 'WELDED (Y/N)'],
+    reject_count: ['REPAIR', 'REPAIR 1'],
+    pwht_required: ['PWHT Y/N', 'PWHT REQUIRED', 'PWHT'],
+    _welder: ['WELDER'],
+    _wps: ['WPS'],
+    _system: ['SYSTEM'],
+  },
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -561,6 +730,18 @@ const supportsListImporter = {
   table: 'supports_list',
   headerRow: 1,
   deleteKey: 'support_mark',
+  requiredFields: ['support_mark'],
+  columnMap: {
+    support_mark: ['SUPPORT UNIQUE NN', 'SUPPORT MARK', 'SUPPORT NO', 'MARK', 'SUPPORT ID', 'SUPPORT'],
+    eidos: ['EIDOS STIRIGMATOS', 'EIDOS', 'TYPE EIDOS'],
+    is_field: ['IS FIELD?', 'IS FIELD', 'IS_FIELD'],
+    qty: ['QTY.', 'QTY', 'QUANTITY'],
+    weight_kg: ['WEIGHT', 'WEIGHT (KG)', 'WEIGHT KG', 'WT'],
+    fitup_date: ['FIT-UP DATE', 'FITUP DATE', 'FIT UP DATE'],
+    weld_date: ['WELD DATE', 'WELDED DATE'],
+    _welder: ['WELDER', 'WELDER ID', 'STAMP'],
+    _notes: ['NOTES', 'REMARKS'],
+  },
 
   detect(sheetName) {
     const n = sheetName.toUpperCase().trim();
@@ -620,6 +801,26 @@ const testpackRegisterImporter = {
   table: 'testpacks',
   headerRow: 1,
   deleteKey: 'testpack_no',
+  requiredFields: ['testpack_no'],
+  columnMap: {
+    testpack_no: ['TESTPACK NO', 'TESTPACK', 'TESTPACK ID', 'TEST PACK NO', 'TP NO'],
+    system: ['SYSTEM'],
+    sub_system: ['SUB SYSTEM', 'SUBSYSTEM', 'SUB-SYSTEM'],
+    fluid: ['FLUID', 'FLUID CODE'],
+    test_medium: ['TEST MEDIUM', 'MEDIUM'],
+    test_pressure_bar: ['TEST PRESSURE', 'TEST PRESSURE (BAR)', 'PRESSURE'],
+    design_pressure_bar: ['DESIGN PRESSURE', 'DESIGN PRESSURE (BAR)'],
+    line_check_done: ['LINE CHECK DONE', 'LINE CHECK'],
+    line_check_date: ['LINE CHECK DATE'],
+    blinding_done: ['BLINDING DONE', 'BLINDING'],
+    blinding_date: ['BLINDING DATE'],
+    test_date: ['TEST DATE'],
+    test_result: ['TEST RESULT', 'RESULT'],
+    reinstatement_done: ['REINSTATEMENT DONE', 'REINSTATEMENT'],
+    reinstatement_date: ['REINSTATEMENT DATE'],
+    status: ['STATUS'],
+    punch_list_clear: ['PUNCH LIST CLEAR', 'PUNCH CLEAR', 'PUNCHLIST CLEAR'],
+  },
 
   detect(sheetName) {
     const n = sheetName.toUpperCase();
@@ -1227,7 +1428,6 @@ export const IMPORTERS = [
   weldLogImporter,
   supportsListImporter,
   testpackRegisterImporter,
-  materialListImporter,
 ];
 
 export function detectImporter(sheetName) {
@@ -1236,9 +1436,16 @@ export function detectImporter(sheetName) {
 
 export function parseSheet(rawRows, importer, projectId) {
   const headerIdx = importer.headerRow;
-  if (headerIdx >= rawRows.length) return { headers: [], mapped: [], toDelete: [], errors: [], skippedEntryStatus: 0 };
+  if (headerIdx >= rawRows.length) return { headers: [], mapped: [], toDelete: [], errors: [], skippedEntryStatus: 0, validation: { valid: true, missing: [], unknown: [], absentFields: new Set() } };
 
   const headers = rawRows[headerIdx];
+
+  // Validate headers
+  const validation = validateImportHeaders(headers, importer);
+  if (!validation.valid) {
+    return { headers, mapped: [], toDelete: [], errors: [], skippedEntryStatus: 0, validation };
+  }
+
   const dataRows = rawRows.slice(headerIdx + 1);
   const mapped = [];
   const toDelete = [];
@@ -1251,19 +1458,22 @@ export function parseSheet(rawRows, importer, projectId) {
       if (!record) return;
       const status = record._entry_status;
       delete record._entry_status;
+
+      // Strip fields for absent columns (partial-safe upsert)
+      const sanitized = sanitizeRecord(record, validation.absentFields);
+
       if (status === 'DELETE') {
-        toDelete.push(record);
+        toDelete.push(sanitized);
       } else if (status) {
-        // Unknown entry_status value — skip row
         skippedEntryStatus++;
         console.warn(`[parseSheet/${importer.id}] unknown Entry_Status "${status}" at row ${headerIdx + 1 + i + 1}, skipping`);
       } else {
-        mapped.push(record);
+        mapped.push(sanitized);
       }
     } catch (err) {
       errors.push({ row: headerIdx + 1 + i + 1, message: err.message });
     }
   });
 
-  return { headers, mapped, toDelete, errors, skippedEntryStatus };
+  return { headers, mapped, toDelete, errors, skippedEntryStatus, validation };
 }

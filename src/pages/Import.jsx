@@ -3,6 +3,7 @@ import { read, utils } from 'xlsx';
 import { useProject } from '../lib/project.jsx';
 import { getSupabase } from '../lib/supabase';
 import { IMPORTERS, detectImporter, parseSheet, importMaterialsBOM, importMaterialsCatalogue, importMaterialsDelivery, matchBomToCatalogue } from '../lib/importers';
+import { downloadTemplate, downloadData } from '../lib/downloads';
 
 const BATCH_SIZE = 200;
 
@@ -70,6 +71,12 @@ export default function Import() {
     setSelected(idx);
     const result = parseSheet(s.rawRows, s.importer, project.id);
     setPreview({ ...result, importer: s.importer });
+
+    // Block if required columns are missing
+    if (result.validation && !result.validation.valid) {
+      setStep(STEPS.PREVIEW); // show the rejection message
+      return;
+    }
     setStep(STEPS.PREVIEW);
   }
 
@@ -214,7 +221,7 @@ export default function Import() {
             </p>
           </div>
 
-          {/* Supported types */}
+          {/* Supported types with download buttons */}
           <div style={{ marginTop: 'var(--space-lg)' }}>
             <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 'var(--space-sm)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
               Supported imports
@@ -231,16 +238,15 @@ export default function Import() {
                   color: 'var(--color-text-secondary)',
                 }}
               >
-                <span style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  background: 'var(--color-success)',
-                  flexShrink: 0,
-                }} />
-                {imp.label} → {imp.table}
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-success)', flexShrink: 0 }} />
+                <span style={{ flex: 1 }}>{imp.label}</span>
+                <button onClick={() => downloadTemplate(imp.id)} style={dlBtn}>Template</button>
+                <button onClick={() => downloadData(imp.id, project.id)} style={dlBtn}>Data</button>
               </div>
             ))}
+            <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 'var(--space-sm)' }}>
+              Upload behaviour: Additive. To delete rows, set Entry_Status to DELETE.
+            </p>
           </div>
         </div>
       )}
@@ -288,6 +294,24 @@ export default function Import() {
       {/* Preview */}
       {step === STEPS.PREVIEW && preview && (
         <div>
+          {/* Validation rejection */}
+          {preview.validation && !preview.validation.valid && (
+            <div style={{ padding: 'var(--space-lg)', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-md)' }}>
+              <p style={{ fontSize: 15, fontWeight: 600, color: '#991b1b', marginBottom: 'var(--space-sm)' }}>
+                Missing required columns
+              </p>
+              <p style={{ fontSize: 13, color: '#991b1b', marginBottom: 'var(--space-md)' }}>
+                {preview.validation.missing.join(', ')}
+              </p>
+              <p style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                Download a Template or Data file to start from the correct format.
+              </p>
+              <button onClick={reset} style={{ ...btnSecondary, marginTop: 'var(--space-md)' }}>Back</button>
+            </div>
+          )}
+
+          {/* Normal preview (validation passed) */}
+          {(!preview.validation || preview.validation.valid) && (<>
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -313,6 +337,11 @@ export default function Import() {
                   </span>
                 )}
               </p>
+              {preview.validation?.unknown?.length > 0 && (
+                <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>
+                  Ignored {preview.validation.unknown.length} unknown column{preview.validation.unknown.length !== 1 ? 's' : ''}: {preview.validation.unknown.slice(0, 5).join(', ')}{preview.validation.unknown.length > 5 ? '...' : ''}
+                </p>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
               <button onClick={reset} style={btnSecondary}>Cancel</button>
@@ -366,6 +395,7 @@ export default function Import() {
               Showing 5 of {preview.mapped.length} rows
             </p>
           )}
+        </>)}
         </div>
       )}
 
@@ -464,10 +494,14 @@ export default function Import() {
                   setMatStatus({ type: 'bom', running: false, result: null, error: err.message });
                 }
               }} />
-            <button onClick={() => bomFileRef.current?.click()} style={btnPrimary}
-              disabled={matStatus?.type === 'bom' && matStatus.running}>
-              {matStatus?.type === 'bom' && matStatus.running ? 'Importing...' : 'Select File'}
-            </button>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+              <button onClick={() => bomFileRef.current?.click()} style={btnPrimary}
+                disabled={matStatus?.type === 'bom' && matStatus.running}>
+                {matStatus?.type === 'bom' && matStatus.running ? 'Importing...' : 'Select File'}
+              </button>
+              <button onClick={() => downloadTemplate('materials_bom')} style={dlBtn}>Template</button>
+              <button onClick={() => downloadData('materials_bom', project.id)} style={dlBtn}>Data</button>
+            </div>
           </div>
 
           {/* MTO Catalogue */}
@@ -487,20 +521,28 @@ export default function Import() {
                   setMatStatus({ type: 'mto', running: false, result: null, error: err.message });
                 }
               }} />
-            <button onClick={() => mtoFileRef.current?.click()} style={btnPrimary}
-              disabled={matStatus?.type === 'mto' && matStatus.running}>
-              {matStatus?.type === 'mto' && matStatus.running ? 'Importing...' : 'Select File'}
-            </button>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+              <button onClick={() => mtoFileRef.current?.click()} style={btnPrimary}
+                disabled={matStatus?.type === 'mto' && matStatus.running}>
+                {matStatus?.type === 'mto' && matStatus.running ? 'Importing...' : 'Select File'}
+              </button>
+              <button onClick={() => downloadTemplate('materials_catalogue')} style={dlBtn}>Template</button>
+              <button onClick={() => downloadData('materials_catalogue', project.id)} style={dlBtn}>Data</button>
+            </div>
           </div>
 
           {/* Delivery / NOI */}
           <div style={matCard}>
             <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Import Material Delivery / NOI</p>
             <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 'var(--space-sm)' }}>Delivery note with line items</p>
-            <button onClick={() => { setDeliveryModal(true); setDeliveryForm({ po_no: '', noi_no: '', delivery_date: todayStr(), supplier: '', notes: '' }); }} style={btnPrimary}
-              disabled={matStatus?.type === 'delivery' && matStatus.running}>
-              {matStatus?.type === 'delivery' && matStatus.running ? 'Importing...' : 'Enter Details'}
-            </button>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+              <button onClick={() => { setDeliveryModal(true); setDeliveryForm({ po_no: '', noi_no: '', delivery_date: todayStr(), supplier: '', notes: '' }); }} style={btnPrimary}
+                disabled={matStatus?.type === 'delivery' && matStatus.running}>
+                {matStatus?.type === 'delivery' && matStatus.running ? 'Importing...' : 'Enter Details'}
+              </button>
+              <button onClick={() => downloadTemplate('materials_delivery')} style={dlBtn}>Template</button>
+              <button onClick={() => downloadData('materials_delivery', project.id)} style={dlBtn}>Data</button>
+            </div>
           </div>
         </div>
 
@@ -717,4 +759,15 @@ const matInput = {
   borderRadius: 'var(--radius-sm)',
   fontSize: 13,
   outline: 'none',
+};
+
+const dlBtn = {
+  padding: '4px 8px',
+  background: 'transparent',
+  color: 'var(--color-primary)',
+  border: '1px solid var(--color-border)',
+  borderRadius: 'var(--radius-sm)',
+  fontSize: 11,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
 };
