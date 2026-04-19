@@ -1,0 +1,24 @@
+-- 018 — Extend wps_list to full 23-column register format
+
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS serial_no integer;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS revision text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS wps_standard text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS pqr_wpar text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS pqr_wpar_standard text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS welding_processes text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS joints text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS parent_material_1 text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS parent_material_pno_gno text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS filler_material text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS f_number text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS a_number text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS thickness_range_mm text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS max_thickness_deposit text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS od_range_mm text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS qualification_positions text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS preheat text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS post_heat text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS pwht text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS interpass_temp text;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS qualified_date date;
+ALTER TABLE wps_list ADD COLUMN IF NOT EXISTS remarks text;

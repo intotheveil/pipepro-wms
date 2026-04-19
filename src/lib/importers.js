@@ -261,27 +261,55 @@ const wpsRegisterImporter = {
   mapRow(row, headers, projectId) {
     const col = (...names) => cellVal(row, findColumn(headers, ...names));
 
-    const wpsNo = str(col('WPS REF.', 'WPS REF', 'WPS NO', 'WPS'));
+    const wpsNo = str(col('WPS No', 'WPS REF.', 'WPS REF', 'WPS NO', 'WPS No.', 'WPS'));
     if (!wpsNo) return null;
 
-    // Validate process against CHECK constraint
-    const rawProcess = str(col('PROCESS'));
+    // Welding processes — also populate legacy 'process' column
+    const weldingProcesses = str(col('WELDING PROCESSES', 'PROCESS'));
+    const rawProcess = weldingProcesses;
     const VALID_PROCESS = ['GTAW', 'SMAW', 'FCAW', 'SAW'];
     const process = VALID_PROCESS.includes(rawProcess.toUpperCase())
       ? rawProcess.toUpperCase()
       : rawProcess || null;
 
+    // Thickness — also populate legacy column
+    const thicknessRangeMm = str(col('THICKNESS RANGE (MM)', 'THICKNESS RANGE', 'THICKNESS'));
+    // Qualification positions — also populate legacy column
+    const qualPositions = str(col('QUALIFICATION POSITIONS', 'POSITION'));
+
     return {
       project_id: projectId,
       wps_no: wpsNo,
+      serial_no: parseInt2(col('S/N', 'SERIAL NUMBER', 'SERIAL NO')),
+      revision: str(col('REVISION', 'REV')) || null,
+      wps_standard: str(col('WPS STANDARD', 'WPS Standard')) || null,
+      pqr_wpar: str(col('PQR / WPAR', 'PQR/WPAR')) || null,
+      pqr_wpar_standard: str(col('PQR / WPAR STANDARD', 'PQR STANDARD')) || null,
+      welding_processes: weldingProcesses || null,
       process,
-      p_numbers: str(col('BASE MATERIAL GROUP', 'BASE MATERIAL', 'P NUMBERS', 'P-NUMBERS')),
-      thickness_range: str(col('THICKNESS RANGE', 'THICKNESS')),
-      position: str(col('POSITION')),
+      joints: str(col('JOINTS')) || null,
+      parent_material_1: str(col('PARENT MATERIALS NO1', 'PARENT MATERIAL 1')) || null,
+      parent_material_pno_gno: str(col('PARENT MATERIALS P NO/ G NO', 'P NO / G NO')) || null,
+      p_numbers: str(col('BASE MATERIAL GROUP', 'BASE MATERIAL', 'P NUMBERS', 'P-NUMBERS')) || null,
+      filler_material: str(col('FILLER MATERIAL NO1', 'FILLER MATERIAL')) || null,
+      f_number: str(col('F NUMBER', 'F NO')) || null,
+      a_number: str(col('A NUMBER', 'A NO')) || null,
+      thickness_range_mm: thicknessRangeMm || null,
+      thickness_range: thicknessRangeMm || null,
+      max_thickness_deposit: str(col('MAXIMUM THICKNESS DEPOSIT PER PROCESS RANGE', 'MAX THICKNESS DEPOSIT')) || null,
+      od_range_mm: str(col('OD RANGE (MM)', 'OD RANGE')) || null,
+      qualification_positions: qualPositions || null,
+      position: qualPositions || null,
+      preheat: str(col('PREHEAT')) || null,
+      post_heat: str(col('POST HEAT')) || null,
+      pwht: str(col('PWHT')) || null,
+      interpass_temp: str(col('INTERPASS T\u00B0', 'INTERPASS TEMP')) || null,
+      qualified_date: parseDate(col('DATE', 'QUALIFIED DATE')),
+      remarks: str(col('REMARKS')) || null,
     };
   },
 
-  previewColumns: ['wps_no', 'process', 'p_numbers', 'thickness_range', 'position'],
+  previewColumns: ['wps_no', 'welding_processes', 'joints', 'parent_material_1', 'thickness_range_mm', 'qualification_positions'],
 };
 
 // -- Importer: SPOOL DMP -----------------------------------------------------
